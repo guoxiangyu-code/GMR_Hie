@@ -1,6 +1,8 @@
 # Python cache
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 
 # Virtual environments
 .venv/
@@ -15,6 +17,9 @@ env/
 Thumbs.db
 .vscode/
 .idea/
+
+# GitHub / local env
+.env
 
 # Local outputs and temporary files
 *.log

@@ -1,16 +1,53 @@
 cff-version: 1.2.0
-title: "Generalized Moment Retrieval"
+title: "Retrieving Any Relevant Moments: Benchmark and Models for Generalized Moment Retrieval"
 message: "If you use this repository, please cite the associated paper."
 type: software
 authors:
-  - family-names: "Anonymous"
-    given-names: "Authors"
-repository-code: "https://github.com/your-org/generalized-moment-retrieval"
-abstract: "Official benchmark labels and evaluation toolkit for Generalized Moment Retrieval (GMR)."
+  - family-names: "Ding"
+    given-names: "Yiming"
+  - family-names: "Cao"
+    given-names: "Siyu"
+  - family-names: "Jiao"
+    given-names: "Luyuan"
+  - family-names: "Li"
+    given-names: "Yixuan"
+  - family-names: "Wang"
+    given-names: "Zitong"
+  - family-names: "Liu"
+    given-names: "Zhiyong"
+  - family-names: "Zhang"
+    given-names: "Lu"
+repository-code: "https://github.com/dymm9977/generalized-moment-retrieval"
+url: "https://dymm9977.github.io/generalized-moment-retrieval/"
+abstract: "Official benchmark labels, evaluation toolkit, and model resources for Generalized Moment Retrieval (GMR)."
 keywords:
   - generalized moment retrieval
   - video moment retrieval
   - temporal grounding
+  - soccer video understanding
   - benchmark
   - evaluation
 license: MIT
+date-released: 2026-05-04
+preferred-citation:
+  type: article
+  title: "Retrieving Any Relevant Moments: Benchmark and Models for Generalized Moment Retrieval"
+  authors:
+    - family-names: "Ding"
+      given-names: "Yiming"
+    - family-names: "Cao"
+      given-names: "Siyu"
+    - family-names: "Jiao"
+      given-names: "Luyuan"
+    - family-names: "Li"
+      given-names: "Yixuan"
+    - family-names: "Wang"
+      given-names: "Zitong"
+    - family-names: "Liu"
+      given-names: "Zhiyong"
+    - family-names: "Zhang"
+      given-names: "Lu"
+  journal: "arXiv preprint arXiv:2605.02623"
+  year: 2026
+  doi: "10.48550/arXiv.2605.02623"
+  url: "https://arxiv.org/abs/2605.02623"

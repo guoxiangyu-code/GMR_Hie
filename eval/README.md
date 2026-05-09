@@ -42,7 +42,7 @@ You can also run a full benchmark-style example provided in this repository:
 ```bash
 python eval_main.py \
   --submission_path example/example_test_submission.jsonl \
-  --gt_path ../data/label/sub/test.jsonl \
+  --gt_path ../data/label/Standard/test.jsonl \
   --save_path example/example_test_results.json
 ```
 

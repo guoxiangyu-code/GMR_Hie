@@ -1,173 +1,159 @@
 # Generalized Moment Retrieval
 
-Official benchmark labels and evaluation toolkit for **Generalized Moment Retrieval (GMR)**.
+Official repository for **Retrieving Any Relevant Moments: Benchmark and Models for Generalized Moment Retrieval**.
 
-> A unified retrieval setting where each query may correspond to **no moment**, **one moment**, or **multiple moments** within a video.
+**Generalized Moment Retrieval (GMR)** extends video moment retrieval to a unified setting where a query may correspond to **no moment**, **one moment**, or **multiple moments** in a video. A GMR system must retrieve the complete set of relevant temporal moments, or correctly return an empty set when the queried event is absent.
 
 <div align="center">
-  <a href="https://dymm9977.github.io/generalized-moment-retrieval/"><img src="https://img.shields.io/badge/Project_Page-Visit-3b82f6?style=for-the-badge" alt="Project Page" /></a>
-  <a href="./eval/README.md"><img src="https://img.shields.io/badge/Evaluation-Toolkit-111827?style=for-the-badge" alt="Evaluation Toolkit" /></a>
-  <a href="./data/README.md"><img src="https://img.shields.io/badge/Benchmark-Labels-0f766e?style=for-the-badge" alt="Benchmark Labels" /></a>
-  <img src="https://img.shields.io/badge/Paper-Coming_Soon-9f1239?style=for-the-badge" alt="Paper Coming Soon" />
+  <a href="https://arxiv.org/abs/2605.02623"><img src="https://img.shields.io/badge/Paper-arXiv%3A2605.02623-b31b1b?style=for-the-badge" alt="Paper" /></a>
+  <a href="https://dymm9977.github.io/generalized-moment-retrieval/"><img src="https://img.shields.io/badge/Project_Page-Visit-2563eb?style=for-the-badge" alt="Project Page" /></a>
+  <a href="https://huggingface.co/datasets/diiiA22B9S/Soccer-GMR"><img src="https://img.shields.io/badge/Hugging_Face-Soccer--GMR-f59e0b?style=for-the-badge" alt="Hugging Face" /></a>
 </div>
-
-## Resources
-
-- **Project Page**: [GMR Project Page](https://dymm9977.github.io/generalized-moment-retrieval/)
-- **Repository Overview**: [README](README.md)
-- **Benchmark Labels**: [`data/`](data/)
-- **Evaluation Toolkit**: [`eval/`](eval/)
-- **Paper**: reserved for the post-anonymization release
-
-This repository is being released in stages. The current release focuses on the **Soccer-GMR benchmark labels** and the **official GMR evaluation toolkit**.
 
 ![Three retrieval scenarios in Generalized Moment Retrieval](assets/intro.png)
 
-## Resources
+## Task
 
-- **Project Page**: [GMR Project Page](https://dymm9977.github.io/generalized-moment-retrieval/)
-- **Benchmark Labels**: [`data/`](data/)
-- **Evaluation Toolkit**: [`eval/`](eval/)
-- **Data Format**: [`data/README.md`](data/README.md)
-- **Evaluation Guide**: [`eval/README.md`](eval/README.md)
-- **Citation Metadata**: [`CITATION.cff`](CITATION.cff)
-- **Paper**: reserved for the post-anonymization release
+Traditional Video Moment Retrieval (VMR) commonly assumes that every query has exactly one matching temporal segment. This assumption is too restrictive for realistic retrieval: an event can be absent, occur once, or occur repeatedly within the same video.
 
-## What is GMR?
+GMR unifies these cases into one retrieval task:
 
-Traditional Video Moment Retrieval (VMR) typically assumes that each query corresponds to exactly one moment in a video. In realistic retrieval scenarios, however, a query may correspond to **no moment**, **one moment**, or **multiple moments**.
+- **Null-set rejection**: return an empty set when the event does not appear.
+- **Single-moment retrieval**: retrieve the only relevant temporal segment.
+- **Multi-moment retrieval**: retrieve all relevant temporal segments.
 
-We formulate **Generalized Moment Retrieval (GMR)** as a unified setting where a model must return the complete set of relevant temporal moments for a query, or correctly predict an empty set when the queried event does not exist.
+The output for each query is a set of temporal windows:
 
-## Release Scope
+```json
+{
+  "qid": 580,
+  "pred_relevant_windows": [[26.0, 34.0, 0.91], [104.0, 112.0, 0.87]],
+  "pred_exist_score": 0.95
+}
+```
 
-This repository is released progressively.
+## Pipeline
 
-### Available in the current release
-- [x] Soccer-GMR benchmark labels
-- [x] Official GMR evaluation toolkit
-- [x] Full evaluation example and usage instructions
+Soccer-GMR is built through a duration-flexible semi-automated data construction pipeline with human verification. The pipeline converts timestamped soccer event supervision into generalized moment retrieval annotations by constructing natural-language queries, sampling positive and in-domain negative query-video pairs, and normalizing temporal annotations into evaluation-ready windows.
 
-### Planned for future release
-- [ ] Data construction pipeline
-- [ ] Baseline model implementations
-- [ ] Training and inference code
+![Soccer-GMR construction pipeline](assets/pipeline222.png)
 
-Future components will be released progressively after code cleanup, documentation, and asset compliance review.
+The duration-flexible design allows the benchmark to scale from fixed 150-second clips to longer video horizons by merging adjacent clips while preserving moment-level supervision.
 
-## What is Soccer-GMR?
+## Dataset
 
-**Soccer-GMR** is a benchmark instantiation of GMR built on challenging soccer videos. It covers all three retrieval scenarios in a unified setting:
+**Soccer-GMR** is a large-scale GMR benchmark built on challenging soccer videos. It includes realistic positive and negative query-video pairs and covers all three retrieval scenarios in a unified format.
 
-- **Null-set rejection**: the query has no corresponding moment in the video
-- **Single-moment retrieval**: the query has exactly one relevant moment
-- **Multi-moment retrieval**: the query has multiple relevant moments
+| Split group | Purpose | Files |
+| --- | --- | --- |
+| `data/label/Standard/` | Benchmark split used for the main experiments | `train.jsonl`, `val.jsonl`, `test.jsonl` |
+| `data/label/Full/` | Complete dataset used for scaling studies | `train.jsonl`, `val.jsonl`, `test.jsonl`, `full.jsonl` |
 
-Compared with conventional VMR benchmarks, Soccer-GMR emphasizes:
-- realistic **in-domain negative queries**
-- unified evaluation for rejection and localization
-- a **duration-flexible** benchmark construction perspective
+Dataset statistics:
 
-Current benchmark statistics:
-- 139 matches
-- 5.5K video clips
-- 22.1K query-clip pairs
+| Split group | Train | Val | Test | Total |
+| --- | ---: | ---: | ---: | ---: |
+| `Standard` | 4,138 | 465 | 1,036 | 5,639 |
+| `Full` | 16,898 | 2,235 | 2,986 | 22,119 |
+
+For details about label fields and directory organization, see [`data/README.md`](data/README.md). Large assets, including videos and model weights, are hosted on [Hugging Face](https://huggingface.co/datasets/diiiA22B9S/Soccer-GMR).
 
 ![Statistics of Soccer-GMR](assets/dataset.png)
+
+## Metrics
+
+GMR evaluation requires measuring both rejection and localization. The official evaluation toolkit is provided in [`eval/`](eval/).
+
+The evaluation protocol reports:
+
+- **Null-set rejection**: AUROC, Rej-F1, Acc
+- **Temporal localization on positive queries**: mAP, mR@k, mR+@k, mIoU@k, mIoU+@k
+- **End-to-end GMR performance**: G-mIoU@k
+
+Run the example evaluation:
+
+```bash
+python eval/eval_main.py \
+  --submission_path eval/example/example_test_submission.jsonl \
+  --gt_path data/label/Standard/test.jsonl \
+  --save_path eval/example/example_test_results.json
+```
+
+For input formats, metric definitions, and command-line options, see [`eval/README.md`](eval/README.md).
+
+## Methods
+
+The paper studies GMR across two modeling paradigms.
+
+**GMR Adapter** is a lightweight plug-and-play module for discriminative VMR backbones. It adds an explicit existence-estimation branch for null-set prediction while preserving the temporal localization backbone.
+
+![Architecture of the GMR Adapter](assets/adapter10.png)
+
+**GMR-tailored GRPO Reward** adapts reinforcement learning for generative multimodal large language models by jointly rewarding correct rejection behavior and temporal localization quality.
+
+## Main Results
+
+The main results below are reported on the Soccer-GMR `Standard` benchmark split.
+
+| Model | AUROC | Rej-F1 | mAP | mR@5 | mR+@5 | G-mIoU@1 | G-mIoU@3 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Moment-DETR | 69.92 | 0.00 | 6.98 | 10.92 | 0.78 | 5.39 | 2.47 |
+| Moment-DETR-GMR | 72.09 | **64.01** | 7.52 | 12.96 | 0.84 | 35.84 | 32.89 |
+| EaTR | 70.99 | 0.80 | 18.48 | 25.27 | 11.81 | 12.94 | 6.67 |
+| EaTR-GMR | **79.11** | 62.10 | 18.56 | 24.43 | 13.97 | 37.89 | 31.95 |
+| FlashVTG | 57.33 | 7.12 | 23.61 | 33.06 | 15.30 | 15.41 | 8.21 |
+| FlashVTG-GMR | 74.00 | 61.72 | **24.62** | **33.36** | **19.10** | **39.58** | **33.53** |
 
 ## Repository Structure
 
 ```text
 Generalized_Moment_Retrieval/
-├── README.md
-├── LICENSE
-├── CITATION.cff
-├── requirements.txt
-├── data/
-│   ├── README.md
-│   └── label/
-│       ├── full/
-│       └── sub/
-├── assets/
-│   ├── intro.png
-│   └── dataset.png
-├── eval/
-│   ├── README.md
-│   ├── eval_main.py
-│   ├── metrics.py
-│   ├── normalization.py
-│   ├── utils.py
-│   └── example/
-│       ├── example_test_submission.jsonl
-│       └── example_test_results.json
-├── pipeline/
-│   └── README.md
-├── models/
-│   └── README.md
-└── training/
-    └── README.md
+|-- README.md
+|-- LICENSE
+|-- CITATION.cff
+|-- requirements.txt
+|-- assets/
+|   |-- intro.png
+|   |-- pipeline222.png
+|   |-- dataset.png
+|   `-- adapter10.png
+|-- data/
+|   |-- README.md
+|   `-- label/
+|       |-- Full/
+|       `-- Standard/
+|-- eval/
+|   |-- README.md
+|   |-- eval_main.py
+|   |-- metrics.py
+|   |-- normalization.py
+|   |-- utils.py
+|   `-- example/
+|-- docs/
+|   |-- index.html
+|   |-- styles.css
+|   `-- script.js
+|-- pipeline/
+|-- models/
+`-- training/
 ```
 
-## Data Release Policy
-
-We separate the release of code, labels, and large assets:
-
-- **GitHub**: source code, benchmark labels, metadata, examples, scripts, and documentation
-- **Hugging Face / external hosting**: larger benchmark-related assets, optional features, or mirrored data files
-- **Raw videos**: not directly distributed in this repository
-
-When applicable, we provide metadata, indices, or preparation scripts instead of hosting raw video files directly.
-
-## Quick Start
-
-Install dependencies:
+## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Run the official evaluation on a full benchmark-style example provided in this repository:
-
-```bash
-python eval/eval_main.py \
-  --submission_path eval/example/example_test_submission.jsonl \
-  --gt_path data/label/sub/test.jsonl \
-  --save_path eval/example/example_test_results.json
-```
-
-For detailed metric definitions, input/output formats, and evaluation options, please see [`eval/README.md`](eval/README.md).
-
-## Data Format
-
-Benchmark labels are provided in JSONL format under [`data/`](data/).
-
-The evaluation pipeline mainly consumes:
-- `qid`
-- `relevant_windows`
-
-Some label files also preserve intermediate annotation fields such as `moment`, which can be normalized into evaluation-ready windows through the provided evaluation utilities.
-
-Please refer to [`data/README.md`](data/README.md) for detailed field descriptions and file organization.
-
-## Evaluation
-
-The official evaluation toolkit is provided in [`eval/`](eval/), including metrics for:
-
-- **Null-set rejection** (e.g. Rej-F1, AUROC)
-- **Temporal localization** (e.g. mR@k, mR+@k, mAP)
-- **End-to-end GMR performance** (e.g. G-mIoU@k)
-
-For detailed usage instructions, metric definitions, and examples, please refer to [`eval/README.md`](eval/README.md).
-
 ## Citation
 
-If you find this repository useful, please consider citing our work:
+If you find this repository useful, please cite our paper:
 
 ```bibtex
-@article{retrieving_any_relevant_moments_gmr,
+@article{ding2026retrieving,
   title={Retrieving Any Relevant Moments: Benchmark and Models for Generalized Moment Retrieval},
-  author={Anonymous},
-  journal={arXiv preprint arXiv:XXXX.XXXXX},
-  year={2026}
+  author={Ding, Yiming and Cao, Siyu and Jiao, Luyuan and Li, Yixuan and Wang, Zitong and Liu, Zhiyong and Zhang, Lu},
+  journal={arXiv preprint arXiv:2605.02623},
+  year={2026},
+  doi={10.48550/arXiv.2605.02623}
 }
 ```

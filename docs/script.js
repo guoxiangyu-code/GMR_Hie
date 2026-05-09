@@ -5,7 +5,7 @@ const demoData = {
       "The event is semantically plausible in soccer, but the correct answer is an empty set because no red card appears in the clip.",
     gt: [],
     predicted: [],
-    emptyNote: "Correct target set: ∅"
+    emptyNote: "Correct target set: empty"
   },
   single: {
     title: "Find the moment of a corner kick.",
@@ -53,7 +53,7 @@ function clearEmptyNotes() {
 
 function renderDemo(key) {
   const data = demoData[key];
-  if (!data) return;
+  if (!data || !titleEl || !descriptionEl || !timelineEl) return;
 
   titleEl.textContent = data.title;
   descriptionEl.textContent = data.description;
@@ -74,13 +74,18 @@ function updateTabState(activeKey) {
   });
 }
 
-tabs.forEach((tab) => {
-  tab.addEventListener("click", () => {
-    const key = tab.dataset.demo;
-    updateTabState(key);
-    renderDemo(key);
+if (tabs.length && titleEl && descriptionEl && timelineEl) {
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const key = tab.dataset.demo;
+      updateTabState(key);
+      renderDemo(key);
+    });
   });
-});
+
+  updateTabState("null");
+  renderDemo("null");
+}
 
 const revealTargets = document.querySelectorAll(".reveal-on-scroll");
 
@@ -104,6 +109,3 @@ if ("IntersectionObserver" in window) {
 } else {
   revealTargets.forEach((target) => target.classList.add("is-visible"));
 }
-
-updateTabState("null");
-renderDemo("null");

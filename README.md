@@ -46,15 +46,15 @@ The duration-flexible design allows the benchmark to scale from fixed 150-second
 
 | Split group | Purpose | Files |
 | --- | --- | --- |
-| `data/label/Standard/` | Benchmark split used for the main experiments | `train.jsonl`, `val.jsonl`, `test.jsonl` |
+| `data/label/Standard/` | Benchmark split used for evaluation | `train.jsonl`, `val.jsonl`, `test.jsonl` |
 | `data/label/Full/` | Complete dataset used for scaling studies | `train.jsonl`, `val.jsonl`, `test.jsonl`, `full.jsonl` |
 
 Dataset statistics:
 
-| Split group | Train | Val | Test | Total |
-| --- | ---: | ---: | ---: | ---: |
-| `Standard` | 4,138 | 465 | 1,036 | 5,639 |
-| `Full` | 16,898 | 2,235 | 2,986 | 22,119 |
+| Split group | Train | Val | Test | Total | Videos |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `Standard` | 4,138 | 465 | 1,036 | 5,639 | 1,957 |
+| `Full` | 16,898 | 2,235 | 2,986 | 22,119 | 5,468 |
 
 For details about label fields and directory organization, see [`data/README.md`](data/README.md). Large assets, including videos and model weights, are hosted on [Hugging Face](https://huggingface.co/datasets/diiiA22B9S/Soccer-GMR).
 

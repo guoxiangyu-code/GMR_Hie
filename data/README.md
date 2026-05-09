@@ -72,8 +72,6 @@ Positive multi-moment query:
     "type": "clips",
     "value": [[26.0, 34.0], [104.0, 112.0]]
   },
-  "action_type": "block",
-  "dataset_source": "worldcup2022",
   "relevant_windows": [[26.0, 34.0], [104.0, 112.0]]
 }
 ```
@@ -90,8 +88,6 @@ Null-set query:
     "type": "clips",
     "value": []
   },
-  "action_type": "foul committed",
-  "dataset_source": "worldcup2022",
   "relevant_windows": []
 }
 ```

@@ -58,7 +58,9 @@ Dataset statistics:
 
 For details about label fields and directory organization, see [`data/README.md`](data/README.md). Large assets, including videos and model weights, are hosted on [Hugging Face](https://huggingface.co/datasets/diiiA22B9S/Soccer-GMR).
 
-![Statistics of Soccer-GMR](assets/dataset.png)
+<p align="center">
+  <img src="assets/dataset.png" alt="Statistics of Soccer-GMR" width="720" />
+</p>
 
 ## Metrics
 

@@ -44,6 +44,7 @@ The duration-flexible design allows the benchmark to scale from fixed 150-second
 
 **Soccer-GMR** is a large-scale GMR benchmark built on challenging soccer videos. It includes realistic positive and negative query-video pairs and covers all three retrieval scenarios in a unified format.
 
+
 | Split group | Purpose | Files |
 | --- | --- | --- |
 | `data/label/Standard/` | Benchmark split used for evaluation | `train.jsonl`, `val.jsonl`, `test.jsonl` |
@@ -56,7 +57,7 @@ Dataset statistics:
 | `Standard` | 4,138 | 465 | 1,036 | 5,639 | 1,957 |
 | `Full` | 16,898 | 2,235 | 2,986 | 22,119 | 5,468 |
 
-For details about label fields and directory organization, see [`data/README.md`](data/README.md). Large assets, including videos and model weights, are hosted on [Hugging Face](https://huggingface.co/datasets/diiiA22B9S/Soccer-GMR).
+For details about label fields and directory organization, see [`data/README.md`](data/README.md). Large assets, including videos and model weights, are hosted on [Hugging Face](https://huggingface.co/datasets/diiiA22B9S/Soccer-GMR). Access is manually reviewed after the requester completes the Soccer-GMR NDA form. Commercial use, redistribution, public hosting, or sharing access links is not permitted.
 
 <p align="center">
   <img src="assets/dataset.png" alt="Statistics of Soccer-GMR" width="720" />

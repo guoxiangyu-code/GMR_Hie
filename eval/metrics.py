@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Soccer-GMR 评估指标实现。
+Soccer-GMR metric implementations.
 
-与论文符号对齐：mR@k、mR+@k、mAP、mIoU@k、mIoU+@k、GMR-CLS（AUROC / Rej-F1 等）、G-mIoU@k。
-定位类指标仅在正例查询 \\mathcal{Q}^{+} 上计算；拒识与 G-mIoU 在全集 \\mathcal{Q} 上计算。
+Metrics follow the paper notation: mR@k, mR+@k, mAP, mIoU@k, mIoU+@k,
+GMR-CLS (AUROC / Rej-F1), and G-mIoU@k.
+Localization metrics are computed on positive queries \\mathcal{Q}^{+}; rejection
+and G-mIoU are computed on all queries \\mathcal{Q}.
 """
 
 from __future__ import annotations
@@ -29,12 +31,12 @@ def greedy_match(
     iou_thd: float = -1.0,
 ) -> List[Tuple[int, int, float]]:
     """
-    对预测窗与 GT 窗做逐步贪心一对一匹配（每个 pred 选当前最优未匹配 GT）。
+    Greedily match predicted windows to GT windows one-to-one.
 
     Args:
-        preds: [[st, ed], ...]，顺序视为 top-k 顺序。
+        preds: [[st, ed], ...], ordered as the top-k predictions.
         gts:   [[st, ed], ...]
-        iou_thd: 允许匹配的最小 IoU；-1 表示强制匹配（用于 mIoU 类指标）。
+        iou_thd: Minimum IoU for a valid match; -1 forces matching for mIoU metrics.
     """
     if len(preds) == 0 or len(gts) == 0:
         return []
@@ -73,7 +75,7 @@ def compute_mAP(
     max_pred_windows: int = 10,
     num_workers: int = 8,
 ) -> Dict[str, Any]:
-    """标准时序检测 mAP：仅在正例查询上，对每 query 算 AP 后再在 query 维与 IoU 维平均。"""
+    """Compute standard temporal detection mAP on positive queries."""
     iou_thds = np.array([float(f"{e:.2f}") for e in iou_thds])
 
     pred_by_qid: Dict[Any, list] = defaultdict(list)
@@ -136,8 +138,9 @@ def compute_mR(
     iou_thds: np.ndarray = DEFAULT_IOU_THRESHOLDS,
 ) -> Dict[str, Any]:
     """
-    论文 mR@k：正例查询上，对每个 IoU 阈值 \\theta 做贪心匹配后，
-    每 query 召回率 |M_k|/|G|，再对 query 与 \\theta 平均。输出百分比。
+    Paper mR@k: greedily match predictions for each IoU threshold \\theta on
+    positive queries, compute per-query recall |M_k|/|G|, then average over
+    queries and thresholds. The output is a percentage.
     """
     iou_thds = [float(f"{e:.2f}") for e in iou_thds]
 
@@ -177,7 +180,7 @@ def compute_mR_plus(
     k_list: Sequence[int] = (1, 3, 5),
     iou_thds: np.ndarray = DEFAULT_IOU_THRESHOLDS,
 ) -> Dict[str, Any]:
-    """论文 mR+@k：仅「至少 2 个 GT 窗」的查询；分子分母均刨去首个命中。"""
+    """Paper mR+@k for queries with at least two GT windows, excluding the first hit."""
     iou_thds = [float(f"{e:.2f}") for e in iou_thds]
 
     pred_map: Dict[Any, List] = {}
@@ -217,7 +220,7 @@ def compute_mIoU(
     ground_truth: List[Dict[str, Any]],
     k_list: Sequence[int] = (1, 3, 5),
 ) -> Dict[str, Any]:
-    """mIoU@k：正例上 top-k 与 GT 强制匹配（IoU 无阈值），样本内匹配 IoU 均值再 macro 平均。"""
+    """mIoU@k: force-match top-k predictions to GT on positive queries and macro-average."""
     pred_map: Dict[Any, List] = {}
     for d in submission:
         pred_map[d["qid"]] = [[w[0], w[1]] for w in d.get("pred_relevant_windows", [])]
@@ -249,7 +252,7 @@ def compute_mIoU_plus(
     ground_truth: List[Dict[str, Any]],
     k_list: Sequence[int] = (1, 3, 5),
 ) -> Dict[str, Any]:
-    """mIoU+@k：多时刻样本上去掉 IoU 最高的一对的剩余匹配，刻画「第一个之后的」定位质量。"""
+    """mIoU+@k: average remaining matches after removing the highest-IoU pair."""
     pred_map: Dict[Any, List] = {}
     for d in submission:
         pred_map[d["qid"]] = [[w[0], w[1]] for w in d.get("pred_relevant_windows", [])]
@@ -278,7 +281,7 @@ def compute_mIoU_plus(
 
 
 def _compute_auroc(y_true: np.ndarray, y_score: np.ndarray) -> float:
-    """AUROC（梯形积分）；正负类缺一则返回 0.5 表示未定义。"""
+    """Compute AUROC by trapezoidal integration; return 0.5 if one class is missing."""
     y_true = np.asarray(y_true, dtype=np.float64)
     y_score = np.asarray(y_score, dtype=np.float64)
     n_pos = int(np.sum(y_true == 1))
@@ -305,8 +308,8 @@ def _compute_auroc(y_true: np.ndarray, y_score: np.ndarray) -> float:
 
 def get_existence_score(pred: Dict[str, Any]) -> Tuple[float, str]:
     """
-    论文：s(q) 为显式 existence 概率，否则取窗口置信度最大值作代理。
-    返回 (score, 取值来源标签)。
+    Use explicit existence probability for s(q), or max window confidence as a proxy.
+    Return (score, source_label).
     """
     if "pred_exist_score" in pred:
         try:
@@ -332,8 +335,9 @@ def compute_gmr_cls(
     thresholds: Tuple[float, ...] = (0.4, 0.6),
 ) -> "OrderedDict[str, Any]":
     """
-    GMR-CLS：AUROC + 各阈值下 Rej-F1 / Acc 等。
-    论文以 s(q)<=\\tau 判空集；实现用 score>\\tau 判正例，二分类表等价。
+    GMR-CLS: AUROC plus Rej-F1 / Acc and related scores at each threshold.
+    The paper treats s(q)<=\\tau as null; this implementation uses score>\\tau
+    as positive, which is the complementary binary decision.
     """
     qid2pred = {d["qid"]: d for d in submission if isinstance(d, dict) and "qid" in d}
 
@@ -358,7 +362,7 @@ def compute_gmr_cls(
 
     per_thd: "OrderedDict[str, OrderedDict[str, Any]]" = OrderedDict()
     for thd in sorted(thresholds):
-        # 正类 = 非空预测（存在时刻）；与论文「null 当 s<=\\tau」互补
+        # Positive class means a non-empty prediction, complementing the paper's null rule.
         pred_pos = y_score_arr > thd
         tp = int(np.sum((y_true_arr == 1) & pred_pos))
         tn = int(np.sum((y_true_arr == 0) & ~pred_pos))
@@ -393,7 +397,7 @@ def _clean_pred_windows(
     windows: Any,
     max_pred_windows: Optional[int] = None,
 ) -> List[List[float]]:
-    """解析 pred_relevant_windows 为 [st, ed, score] 列表，非法项跳过。"""
+    """Parse pred_relevant_windows into [st, ed, score] items and skip invalid entries."""
     cleaned: List[List[float]] = []
     for w in windows or []:
         if not isinstance(w, (list, tuple)) or len(w) < 2:
@@ -417,8 +421,9 @@ def prepare_submission_for_gmiou(
     max_pred_windows: Optional[int] = 10,
 ) -> Tuple[List[Dict[str, Any]], OrderedDict[str, Any]]:
     """
-    按存在分数门控预测窗：s(q)>\\tau 时保留 top 预测，否则视为 \\emptyset。
-    仅用于 G-mIoU@k；定位指标仍在原始 submission 上计算。
+    Gate predicted windows by existence score: keep top predictions when s(q)>\\tau,
+    otherwise treat the prediction set as \\emptyset.
+    Only used for G-mIoU@k; localization metrics use the original submission.
     """
     processed: List[Dict[str, Any]] = []
     score_sources: Dict[str, int] = defaultdict(int)
@@ -470,8 +475,8 @@ def _compute_set_iou_score(
     gts: List[Sequence[float]],
 ) -> float:
     """
-    单 query 的集合级 IoU：双空为 1，一空一非空为 0；
-    双非空为 sum(IoU matched) / (|pred|+|gt|-|M|)，匹配 IoU>0 的贪心对。
+    Set-level IoU for one query: both empty gives 1, one empty gives 0, and two
+    non-empty sets use sum(matched IoU) / (|pred|+|gt|-|M|) with greedy IoU>0 matches.
     """
     if len(preds) == 0 and len(gts) == 0:
         return 1.0
@@ -492,7 +497,8 @@ def compute_G_mIoU(
     k_list: Sequence[int] = (1, 3, 5),
 ) -> OrderedDict[str, Any]:
     """
-    论文 G-mIoU@k：门控后的 top-k 与 GT 做集合 IoU，并对全集 query 平均（含空集）。
+    Paper G-mIoU@k: compute set IoU between gated top-k predictions and GT, then
+    average over all queries including empty-set cases.
     """
     pred_by_qid: Dict[Any, List] = {}
     for d in gated_submission:

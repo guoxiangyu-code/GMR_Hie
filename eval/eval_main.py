@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Soccer-GMR 评估唯一入口：读取预测与 GT JSONL，输出全部分数值（JSON）。
+Main Soccer-GMR evaluation entry point for prediction and GT JSONL files.
 
-依赖同目录下的 normalization.py、metrics.py、utils.py。
+Depends on normalization.py, metrics.py, and utils.py in the same directory.
 """
 
 from __future__ import annotations
@@ -44,8 +44,8 @@ def evaluate_gmr(
     verbose: bool = True,
 ) -> "OrderedDict[str, Any]":
     """
-    计算 GMR 全套指标：CLS、G-mIoU@k（k 与 k_list 一致）、
-    以及正例上的 mAP / mR / mR+ / mIoU / mIoU+。
+    Compute the full GMR metric suite: CLS, G-mIoU@k for k_list, and mAP / mR /
+    mR+ / mIoU / mIoU+ on positive queries.
     """
     start = time.time()
 
@@ -78,7 +78,7 @@ def evaluate_gmr(
     sub_pos = [d for d in submission if d.get("qid") in pos_qids]
 
     if len(gt_pos) == 0:
-        raise ValueError("无正例样本，无法计算定位类指标（mAP / mR / mIoU 等）。")
+        raise ValueError("No positive GT samples; localization metrics cannot be computed.")
 
     map_res = compute_mAP(
         sub_pos,
@@ -131,49 +131,49 @@ def evaluate_gmr(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Soccer-GMR Evaluation（GMR 全指标）")
-    parser.add_argument("--submission_path", type=str, required=True, help="预测 JSONL")
+    parser = argparse.ArgumentParser(description="Soccer-GMR Evaluation (full GMR metrics)")
+    parser.add_argument("--submission_path", type=str, required=True, help="Prediction JSONL")
     parser.add_argument("--gt_path", type=str, required=True, help="GT JSONL")
-    parser.add_argument("--save_path", type=str, required=True, help="输出结果 JSON")
+    parser.add_argument("--save_path", type=str, required=True, help="Output metrics JSON")
     parser.add_argument(
         "--gt_ts_window_cfg",
         type=str,
         default=None,
-        help="若 GT 为 timestamps 形态，需提供时间窗展宽配置 JSON",
+        help="Timestamp-window expansion config JSON, required when GT uses timestamp moments",
     )
     parser.add_argument(
         "--k_list",
         type=int,
         nargs="+",
         default=[1, 3, 5],
-        help="mR / mR+ / mIoU / mIoU+ / G-mIoU 的 k 列表（默认 1 3 5）",
+        help="k values for mR / mR+ / mIoU / mIoU+ / G-mIoU (default: 1 3 5)",
     )
     parser.add_argument(
         "--max_pred_windows",
         type=int,
         default=10,
-        help="mAP 与 G-mIoU 门控时最多保留的预测窗数量（默认 10）",
+        help="Maximum retained prediction windows for mAP and G-mIoU gating (default: 10)",
     )
     parser.add_argument(
         "--cls_thresholds",
         type=float,
         nargs="+",
         default=[0.4, 0.6],
-        help="GMR-CLS 中 Rej-F1 / Acc 报告的阈值列表",
+        help="Thresholds for reporting GMR-CLS Rej-F1 / Acc",
     )
     parser.add_argument(
         "--gmiou_cls_threshold",
         type=float,
         default=0.4,
-        help="计算 G-mIoU@k 时用于门控存在分数的阈值 \\tau（默认 0.4）",
+        help="Existence-score threshold \\tau used for G-mIoU@k gating (default: 0.4)",
     )
     parser.add_argument(
         "--map_num_workers",
         type=int,
         default=8,
-        help="mAP 多进程 worker 数（<=1 或样本少则自动单线程）",
+        help="Number of mAP worker processes; <=1 or small inputs use single-thread mode",
     )
-    parser.add_argument("--not_verbose", action="store_true", help="静默运行")
+    parser.add_argument("--not_verbose", action="store_true", help="Run quietly")
     args = parser.parse_args()
 
     verbose = not args.not_verbose
@@ -182,7 +182,7 @@ def main() -> None:
     gt_raw = load_jsonl(args.gt_path)
     ts_cfg = load_ts_window_cfg(args.gt_ts_window_cfg)
 
-    # GMR：保留 GT 中空集样本，用于 CLS 与 G-mIoU
+    # Keep empty-set GT samples for CLS and G-mIoU.
     gt, gt_stats = normalize_ground_truth(gt_raw, ts_cfg, drop_empty_gt=False)
 
     pred_qids = {e["qid"] for e in submission if isinstance(e, dict) and "qid" in e}
@@ -201,7 +201,7 @@ def main() -> None:
         )
 
     if len(shared) == 0:
-        raise ValueError("submission 与 GT 无交集 qid，无法评估。")
+        raise ValueError("Submission and GT have no overlapping qids; evaluation cannot run.")
 
     results = evaluate_gmr(
         submission,

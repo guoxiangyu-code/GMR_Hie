@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Soccer-GMR 评估用：Ground Truth 规范化。
+Ground-truth normalization utilities for Soccer-GMR evaluation.
 
-支持两种标注形态：
-  - 直接提供 relevant_windows: [[st, ed], ...]
-  - moment.type == "clips" / "timestamps" 的原始结构（需配合 ts_cfg 展开时间戳窗）
+Supported annotation formats:
+  - relevant_windows: [[st, ed], ...]
+  - raw moment structures with moment.type == "clips" or "timestamps";
+    timestamp annotations require ts_cfg to expand points into windows.
 
-本模块仅做数据结构与合法性整理，不包含任何指标计算。
+This module only normalizes structure and validity. It does not compute metrics.
 """
 
 from __future__ import annotations
@@ -20,11 +21,11 @@ def sanitize_windows(
     duration: Optional[float] = None,
 ) -> List[List[float]]:
     """
-    将 GT 时间窗列表清洗为合法、去重、按起点排序的 [st, ed] 列表。
+    Clean GT windows into valid, deduplicated [st, ed] windows sorted by start time.
 
     Args:
-        windows: 原始窗列表。
-        duration: 若提供，则将起止裁剪到 [0, duration]（时长未知则跳过裁剪）。
+        windows: Raw window list.
+        duration: If given, clip boundaries to [0, duration]; skip clipping when unknown.
     """
     cleaned: List[List[float]] = []
     for w in windows or []:
@@ -54,7 +55,7 @@ def sanitize_windows(
 
 
 def load_ts_window_cfg(cfg_path: Optional[str]) -> Optional[Dict[str, Any]]:
-    """从 JSON 文件加载时间戳展宽规则；无路径则返回 None。"""
+    """Load timestamp expansion rules from a JSON file; return None when no path is given."""
     if cfg_path is None:
         return None
     with open(cfg_path, "r", encoding="utf-8") as f:
@@ -69,11 +70,11 @@ def get_pre_post_by_query_type(
     query_type: Any,
 ) -> Tuple[float, float]:
     """
-    根据 query_type 解析 timestamps 展宽的前向/后向秒数。
-    若未命中 by_query_type，则回退到 default；再缺则报错。
+    Resolve timestamp expansion seconds before and after the point by query_type.
+    Fall back to default when by_query_type has no match; raise if no rule exists.
     """
     if ts_cfg is None:
-        raise ValueError("GT 为 timestamps 类型但未提供 ts_cfg（需 --gt_ts_window_cfg）")
+        raise ValueError("GT uses timestamp moments, but ts_cfg was not provided. Pass --gt_ts_window_cfg.")
     default = ts_cfg.get("default", None)
     by_qt = ts_cfg.get("by_query_type", {}) or {}
     rule = by_qt.get(str(query_type), None) if query_type is not None else None
@@ -89,9 +90,9 @@ def gt_record_to_relevant_windows(
     ts_cfg: Optional[Dict[str, Any]],
 ) -> List[List[float]]:
     """
-    将单条 GT 记录解析为 relevant_windows（秒级 [st, ed] 列表）。
+    Parse one GT record into relevant_windows as second-level [st, ed] windows.
 
-    若顶层已有 relevant_windows 则直接使用（与 moment 字段互斥场景下优先前者）。
+    Prefer top-level relevant_windows when present, including records that also have moment.
     """
     if "relevant_windows" in d:
         raw = d["relevant_windows"]
@@ -106,7 +107,7 @@ def gt_record_to_relevant_windows(
     if mtype == "clips":
         if value is None:
             return []
-        # 单窗可能被写成二元组而非列表包一层
+        # A single window may be stored as a pair instead of a list of pairs.
         if isinstance(value, (list, tuple)) and len(value) == 2 and isinstance(
             value[0], (int, float)
         ):
@@ -134,12 +135,13 @@ def normalize_ground_truth(
     drop_empty_gt: bool = True,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
-    将原始 GT JSONL 行列表规范为 {qid, relevant_windows} 列表。
+    Normalize raw GT JSONL records into {qid, relevant_windows} items.
 
     Args:
-        gt_raw: 原始记录列表。
-        ts_cfg: 时间戳窗配置（与 load_ts_window_cfg 返回值一致）。
-        drop_empty_gt: True 时丢弃无正例窗的样本（GMR 主评估通常保留空集，故调用方传入 False）。
+        gt_raw: Raw records.
+        ts_cfg: Timestamp window config, matching the return value of load_ts_window_cfg.
+        drop_empty_gt: If True, drop samples with no positive windows. Main GMR evaluation
+            usually keeps empty sets, so callers pass False.
     """
     stats = {"total": len(gt_raw), "kept": 0, "dropped_empty": 0, "dropped_invalid": 0}
     normalized: List[Dict[str, Any]] = []

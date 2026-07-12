@@ -1,6 +1,6 @@
 # Training and Inference
 
-This directory contains the released feature-level training and inference code for **Moment-DETR-GMR**, the Moment-DETR baseline augmented with the GMR Adapter.
+This directory contains the released feature-level training and inference code for **Moment-DETR-GMR** and **FlashVTG-GMR**.
 
 ## Input Format
 
@@ -80,3 +80,7 @@ python training/moment_detr_gmr/evaluate.py \
 ```
 
 The generated submission contains `pred_relevant_windows` and, when the checkpoint has the adapter head, `pred_exist_score`.
+## Available Methods
+
+- [`moment_detr_gmr/`](moment_detr_gmr/): Moment-DETR-GMR training and inference.
+- [`flash_vtg_gmr/`](flash_vtg_gmr/): FlashVTG-GMR training and inference. See the [method documentation](../models/flash_vtg_gmr/README.md).

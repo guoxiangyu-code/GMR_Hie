@@ -86,13 +86,13 @@ For input formats, metric definitions, and command-line options, see [`eval/READ
 
 ## Methods
 
-The paper studies GMR across two modeling paradigms. This repository currently releases the feature-level implementation of **Moment-DETR-GMR**, a Moment-DETR baseline augmented with the GMR Adapter.
+The paper studies GMR across two modeling paradigms. This repository releases the feature-level implementations of **Moment-DETR-GMR** and **FlashVTG-GMR**, two discriminative baselines augmented with the GMR Adapter.
 
 **GMR Adapter** is a lightweight plug-and-play module for discriminative VMR backbones. It adds an explicit existence-estimation branch for null-set prediction while preserving the temporal localization backbone. The released Moment-DETR-GMR code pools decoder query representations, predicts `pred_exist_score`, and uses binary existence supervision derived from whether `relevant_windows` is empty.
 
 ![Architecture of the GMR Adapter](assets/adapter10.png)
 
-Training and inference entry points are provided in [`training/moment_detr_gmr/`](training/moment_detr_gmr/), with runnable script templates in [`scripts/`](scripts/).
+Training and inference entry points are provided in [`training/`](training/), with runnable script templates in [`scripts/`](scripts/). See the [FlashVTG-GMR documentation](models/flash_vtg_gmr/README.md) for its environment, training, and inference details.
 
 **GMR-tailored GRPO Reward** adapts reinforcement learning for generative multimodal large language models by jointly rewarding correct rejection behavior and temporal localization quality.
 
@@ -135,14 +135,19 @@ Generalized_Moment_Retrieval/
 |   |-- utils.py
 |   `-- example/
 |-- configs/
-|   `-- moment_detr_gmr/
+|   |-- moment_detr_gmr/
+|   `-- flash_vtg_gmr/
 |-- models/
-|   `-- moment_detr_gmr/
+|   |-- moment_detr_gmr/
+|   `-- flash_vtg_gmr/
 |-- training/
-|   `-- moment_detr_gmr/
+|   |-- moment_detr_gmr/
+|   `-- flash_vtg_gmr/
 |-- scripts/
 |   |-- train_moment_detr_gmr.sh
-|   `-- infer_moment_detr_gmr.sh
+|   |-- infer_moment_detr_gmr.sh
+|   |-- train_flash_vtg_gmr.sh
+|   `-- infer_flash_vtg_gmr.sh
 |-- docs/
 |   |-- index.html
 |   |-- styles.css
@@ -173,6 +178,17 @@ bash scripts/infer_moment_detr_gmr.sh
 ```
 
 The scripts can be configured with `MODEL_PATH`, `TEXT_FEAT_DIR`, `CLIP_FEAT_DIR`, `SLOWFAST_FEAT_DIR`, and `RESULTS_DIR`.
+
+## FlashVTG-GMR
+
+Train or evaluate FlashVTG-GMR with the provided entry points:
+
+```bash
+bash scripts/train_flash_vtg_gmr.sh
+bash scripts/infer_flash_vtg_gmr.sh
+```
+
+See [`models/flash_vtg_gmr/README.md`](models/flash_vtg_gmr/README.md) for setup, required environment variables, and reproduction settings.
 
 ## Citation
 

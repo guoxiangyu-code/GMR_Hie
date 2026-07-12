@@ -1,0 +1,5 @@
+-r requirements.txt
+tensorboard>=2.5
+nncore==0.4.7
+torch==2.2.2
+torchtext==0.17.2

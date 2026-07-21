@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import Dataset
 import numpy as np
 import random
+import hashlib
 import logging
 from os.path import join, exists
 from models.flash_vtg_gmr.span_utils import span_xx_to_cxw
@@ -72,7 +73,10 @@ class StartEndDataset(Dataset):
                  max_q_l=32, max_v_l=75, data_ratio=1.0, ctx_mode="video",
                  normalize_v=True, normalize_t=True, load_labels=True,
                  clip_len=2, max_windows=5, span_loss_type="l1", txt_drop_ratio=0,
-                 dset_domain=None, mr_only=False, keep_empty_gt=False):
+                 dset_domain=None, mr_only=False, keep_empty_gt=False,
+                 strict_data_contract=False, require_text_mask=False,
+                 text_store_length=77, seed=0, split=None,
+                 legacy_text_mask=False, legacy_gt_sampling=False):
         self.dset_name = dset_name
         self.data_path = data_path
         # MR-only mode does not require highlight-detection annotations.
@@ -96,6 +100,14 @@ class StartEndDataset(Dataset):
         self.load_labels = load_labels
         # If True, keep samples with empty GT windows (negative samples).
         self.keep_empty_gt = bool(keep_empty_gt)
+        self.strict_data_contract = bool(strict_data_contract)
+        self.require_text_mask = bool(require_text_mask)
+        self.legacy_text_mask = bool(legacy_text_mask)
+        self.legacy_gt_sampling = bool(legacy_gt_sampling)
+        self.text_store_length = int(text_store_length)
+        self.seed = int(seed)
+        self.split = split or self._infer_split(data_path)
+        self._epoch = 0
         self.clip_len = clip_len
         self.max_windows = max_windows  # maximum number of windows to use as labels
         self.span_loss_type = span_loss_type
@@ -154,6 +166,11 @@ class StartEndDataset(Dataset):
                 return vid[: -len(ext)]
         return vid
 
+    @staticmethod
+    def _infer_split(data_path):
+        stem = str(data_path).rsplit("/", 1)[-1].split(".", 1)[0].lower()
+        return stem if stem in {"train", "val", "test"} else "unknown"
+
     def _has_video_and_query_features(self, d):
         vid = d.get("vid")
         qid = d.get("qid")
@@ -188,6 +205,15 @@ class StartEndDataset(Dataset):
         # Skip records whose video or query features are unavailable.
         kept = [d for d in datalist if self._has_video_and_query_features(d)]
         if len(kept) < len(datalist):
+            if self.strict_data_contract:
+                missing = [
+                    (d.get("qid"), d.get("vid"))
+                    for d in datalist
+                    if not self._has_video_and_query_features(d)
+                ]
+                raise FileNotFoundError(
+                    f"Strict data contract forbids missing features; first missing rows: {missing[:5]}"
+                )
             logger.warning(
                 "[FlashVTG] Skip missing features: {} examples removed, {} kept.".format(
                     len(datalist) - len(kept), len(kept)
@@ -213,8 +239,13 @@ class StartEndDataset(Dataset):
 
         if self.use_glove:
             model_inputs["query_feat"] = self.get_query(meta["query"])
+            model_inputs["query_mask"] = torch.ones(
+                len(model_inputs["query_feat"]), dtype=torch.bool
+            )
         else:
-            model_inputs["query_feat"] = self._get_query_feat_by_qid(meta["qid"])  # (Dq, ) or (Lq, Dq)
+            query_feat, query_mask = self._get_query_feat_by_qid(meta["qid"])
+            model_inputs["query_feat"] = query_feat
+            model_inputs["query_mask"] = query_mask
 
         if self.use_video:
             model_inputs["video_feat"] = self._get_video_feat_by_vid(meta["vid"])  # (Lv, Dv)
@@ -251,7 +282,9 @@ class StartEndDataset(Dataset):
                 exist = 1.0 if (isinstance(windows, list) and len(windows) > 0) else 0.0
                 model_inputs["exist_label"] = float(exist)
 
-                model_inputs["span_labels"] = self.get_span_labels(windows, ctx_l)  # (#windows, 2) or (0,2)
+                model_inputs["span_labels"] = self.get_span_labels(
+                    windows, ctx_l, meta=meta
+                )  # (#windows, 2) or (0,2)
 
                 # Build a minimal saliency supervision that is safe for empty windows.
                 # For negative samples, we create all-zero saliency labels.
@@ -263,7 +296,9 @@ class StartEndDataset(Dataset):
                 else:
                     if self.dset_name in ['charadesSTA', 'tacos', 'activitynet']: ## charades, tacos, nlq
                         model_inputs["saliency_pos_labels"], model_inputs["saliency_neg_labels"], model_inputs["saliency_all_labels"] = \
-                            self.get_saliency_labels_sub_as_query(windows[0], meta["duration"], ctx_l)  # only one gt
+                            self.get_saliency_labels_sub_as_query(
+                                windows[0], meta["duration"], ctx_l, rng=self._local_rng(meta)
+                            )  # only one gt
                     elif self.dset_name in ['nlq']:
                         model_inputs["saliency_pos_labels"], model_inputs["saliency_neg_labels"], model_inputs["saliency_all_labels"] = \
                             self.get_saliency_labels_sub_as_query(windows[0], meta["duration"], ctx_l, 2)  # only one gt
@@ -271,13 +306,17 @@ class StartEndDataset(Dataset):
                         # MR-only mode does not consume QVHighlights saliency fields.
                         if getattr(self, "mr_only", False) or ("relevant_clip_ids" not in meta) or ("saliency_scores" not in meta):
                             model_inputs["saliency_pos_labels"], model_inputs["saliency_neg_labels"], model_inputs["saliency_all_labels"] = \
-                                self.get_saliency_labels_sub_as_query(windows[0], meta["duration"], ctx_l)
+                                self.get_saliency_labels_sub_as_query(
+                                    windows[0], meta["duration"], ctx_l, rng=self._local_rng(meta)
+                                )
                         else:
                             model_inputs["saliency_pos_labels"], model_inputs["saliency_neg_labels"], model_inputs["saliency_all_labels"] = \
                                 self.get_saliency_labels_all(meta["relevant_clip_ids"], meta["saliency_scores"], ctx_l)
                     else:
                         model_inputs["saliency_pos_labels"], model_inputs["saliency_neg_labels"], model_inputs["saliency_all_labels"] = \
-                            self.get_saliency_labels_sub_as_query(windows[0], meta["duration"], ctx_l)  # only one gt
+                            self.get_saliency_labels_sub_as_query(
+                                windows[0], meta["duration"], ctx_l, rng=self._local_rng(meta)
+                            )  # only one gt
 
         if 'qvhighlight' in self.data_path:
             model_inputs["relevant_clip_ids"] = meta["relevant_clip_ids"]
@@ -289,22 +328,52 @@ class StartEndDataset(Dataset):
         return len(self.preloaded_data)
 
     def __getitem__(self, index):
-        return self.preloaded_data[index]
+        meta, cached_inputs = self.preloaded_data[index]
+        if not (self.strict_data_contract and self.mr_only):
+            return meta, cached_inputs
+        model_inputs = dict(cached_inputs)
+        windows = meta.get("relevant_windows", [])
+        ctx_l = len(model_inputs["video_feat"])
+        if windows:
+            pos, neg, scores = self.get_saliency_labels_sub_as_query(
+                windows[0], meta["duration"], ctx_l, rng=self._local_rng(meta)
+            )
+            model_inputs["saliency_pos_labels"] = pos
+            model_inputs["saliency_neg_labels"] = neg
+            model_inputs["saliency_all_labels"] = scores
+        return meta, model_inputs
+
+    def set_epoch(self, epoch):
+        self._epoch = int(epoch)
+
+    def _local_rng(self, meta):
+        source = meta.get("source", meta.get("dataset_source", "unknown"))
+        identity = (
+            f"{self.seed}|{self.split}|{self._epoch}|{source}|"
+            f"{meta.get('qid')}|{self._vid_to_stem(meta.get('vid'))}"
+        )
+        local_seed = int.from_bytes(hashlib.sha256(identity.encode("utf-8")).digest()[:8], "big")
+        return random.Random(local_seed)
 
     def get_query(self, query):
         word_inds = torch.LongTensor(
             [self.vocab.stoi.get(w.lower(), 400000) for w in query.split()])
         return self.embedding(word_inds)
 
-    def get_saliency_labels_sub_as_query(self, gt_window, duration, ctx_l, max_n=2):
-        clip_len = duration / ctx_l
+    def get_saliency_labels_sub_as_query(self, gt_window, duration, ctx_l, max_n=2, rng=None):
+        rng = rng or random
+        clip_len = self.clip_len if self.strict_data_contract else duration / ctx_l
         gt_st = int(gt_window[0] / clip_len)
         gt_ed = max(0, min(int(gt_window[1] / clip_len), ctx_l) - 1)
         if gt_st > gt_ed:
             gt_st = gt_ed
 
         if gt_st != gt_ed:
-            pos_clip_indices = random.sample(range(gt_st, gt_ed + 1), k=max_n)
+            population = list(range(gt_st, gt_ed + 1))
+            if len(population) >= max_n:
+                pos_clip_indices = rng.sample(population, k=max_n)
+            else:
+                pos_clip_indices = [population[0]] * max_n
         else:
             if self.dset_name == 'nlq':
                 pos_clip_indices = [gt_st] * 2
@@ -313,8 +382,8 @@ class StartEndDataset(Dataset):
 
         neg_pool = list(range(0, gt_st)) + list(range(gt_ed+1, ctx_l))
         try:
-            neg_clip_indices = random.sample(neg_pool, k=max_n)
-        except:
+            neg_clip_indices = rng.sample(neg_pool, k=max_n)
+        except ValueError:
             neg_clip_indices = pos_clip_indices
 
         # For charades_sta
@@ -454,10 +523,11 @@ class StartEndDataset(Dataset):
         return pos_clip_indices, neg_clip_indices, score_array
 
 
-    def get_span_labels(self, windows, ctx_l):
+    def get_span_labels(self, windows, ctx_l, meta=None):
         """
         windows: list([st, ed]) in seconds. E.g. [[26, 36]], corresponding st_ed clip_indices [[13, 17]] (inclusive)
-            Note a maximum of `self.max_windows` windows are used.
+            `self.max_windows=-1` keeps every window. Positive values keep the
+            first windows in canonical manifest order.
         returns Tensor of shape (#windows, 2), each row is [center, width] normalized by video length
         """
         # Support empty windows (negative samples). Return an empty (0,2) tensor with correct dtype.
@@ -468,8 +538,12 @@ class StartEndDataset(Dataset):
                 return torch.zeros((0, 2), dtype=torch.long)
             else:
                 raise NotImplementedError
-        if len(windows) > self.max_windows:
-            random.shuffle(windows)
+        windows = [list(window) for window in windows]
+        if self.max_windows != -1 and len(windows) > self.max_windows:
+            if self.legacy_gt_sampling:
+                if meta is None:
+                    raise ValueError("legacy GT sampling requires sample metadata")
+                self._local_rng(meta).shuffle(windows)
             windows = windows[:self.max_windows]
         if self.span_loss_type == "l1":
             windows = torch.Tensor(windows) / (ctx_l * self.clip_len)  # normalized windows in xx
@@ -485,12 +559,14 @@ class StartEndDataset(Dataset):
     def _get_query_feat_by_qid(self, qid):
         if self.dset_name == 'tvsum':
             q_feat = np.load(join(self.q_feat_dir, "{}.npz".format(qid))) # 'token', 'text'
-            return torch.from_numpy(q_feat['last_hidden_state'])
+            feature = torch.from_numpy(q_feat['last_hidden_state'])
+            return feature, torch.ones(len(feature), dtype=torch.bool)
             # return torch.from_numpy(q_feat['token'])
         # youtube-hl
         elif self.dset_name == 'youtube_uni':
             q_feat = np.load(join(self.q_feat_dir, "{}.npz".format(qid)))
-            return torch.from_numpy(q_feat['last_hidden_state'])
+            feature = torch.from_numpy(q_feat['last_hidden_state'])
+            return feature, torch.ones(len(feature), dtype=torch.bool)
 
         elif self.dset_name in ['tacos', 'nlq']:
             q_feat_path = join(self.q_feat_dir, f"{qid}.npz")
@@ -501,27 +577,62 @@ class StartEndDataset(Dataset):
                 q_feat = l2_normalize_np_array(q_feat)
             if self.txt_drop_ratio > 0:
                 q_feat = self.random_drop_rows(q_feat)
+            return torch.from_numpy(q_feat), torch.ones(len(q_feat), dtype=torch.bool)
         else:
-            try:
-                # QVhighlight dataset
-                q_feat_path = join(self.q_feat_dir, f"qid{qid}.npz")
-                q_feat = np.load(q_feat_path)[self.q_feat_type].astype(np.float32)
-                if self.q_feat_type == "last_hidden_state":
-                    q_feat = q_feat[:self.max_q_l]
-                if self.normalize_t:
-                    q_feat = l2_normalize_np_array(q_feat)
-                if self.txt_drop_ratio > 0:
-                    q_feat = self.random_drop_rows(q_feat)
-            except:
+            q_feat_path = join(self.q_feat_dir, f"qid{qid}.npz")
+            if exists(q_feat_path):
+                with np.load(q_feat_path, allow_pickle=False) as archive:
+                    if self.q_feat_type not in archive.files:
+                        raise KeyError(f"{q_feat_path} lacks key {self.q_feat_type!r}")
+                    q_feat = archive[self.q_feat_type].astype(np.float32)
+                    stored_mask = (
+                        archive["attention_mask"].copy()
+                        if "attention_mask" in archive.files and not self.legacy_text_mask
+                        else None
+                    )
+            elif not self.strict_data_contract:
                 q_feat_path = join(self.q_feat_dir, f"qid{qid}.pt")
                 q_feat = torch.load(q_feat_path).float().numpy()
-                if self.q_feat_type == "last_hidden_state":
-                    q_feat = q_feat[:self.max_q_l]
-                if self.normalize_t:
-                    q_feat = l2_normalize_np_array(q_feat)
-                if self.txt_drop_ratio > 0:
-                    q_feat = self.random_drop_rows(q_feat)
-        return torch.from_numpy(q_feat)  # (D, ) or (Lq, D)
+                stored_mask = None
+            else:
+                raise FileNotFoundError(q_feat_path)
+
+            if self.strict_data_contract and self.q_feat_type == "last_hidden_state":
+                if q_feat.shape != (self.text_store_length, q_feat.shape[-1]):
+                    raise ValueError(
+                        f"{q_feat_path}: expected {self.text_store_length} stored rows, got {q_feat.shape}"
+                    )
+            if self.require_text_mask and stored_mask is None:
+                raise KeyError(f"{q_feat_path}: strict text contract requires attention_mask")
+            if self.q_feat_type == "last_hidden_state":
+                q_feat = q_feat[:self.max_q_l]
+                if stored_mask is None:
+                    query_mask = np.ones(len(q_feat), dtype=bool)
+                else:
+                    stored_mask = np.asarray(stored_mask)
+                    if stored_mask.shape != (self.text_store_length,):
+                        raise ValueError(
+                            f"{q_feat_path}: invalid attention_mask shape {stored_mask.shape}"
+                        )
+                    query_mask = stored_mask[:self.max_q_l].astype(bool)
+                    valid_length = int(stored_mask.astype(bool).sum())
+                    expected = np.arange(self.text_store_length) < valid_length
+                    if not np.array_equal(stored_mask.astype(bool), expected):
+                        raise ValueError(f"{q_feat_path}: non-contiguous attention_mask")
+                    if valid_length > self.max_q_l:
+                        raise ValueError(
+                            f"{q_feat_path}: valid length {valid_length} exceeds max_q_l={self.max_q_l}"
+                        )
+            else:
+                query_mask = np.ones(len(q_feat), dtype=bool)
+            if self.strict_data_contract and not np.isfinite(q_feat).all():
+                raise ValueError(f"{q_feat_path}: text feature contains NaN or Inf")
+            if self.normalize_t:
+                q_feat = l2_normalize_np_array(q_feat)
+            q_feat[~query_mask] = 0
+            if self.txt_drop_ratio > 0:
+                q_feat = self.random_drop_rows(q_feat)
+        return torch.from_numpy(q_feat), torch.from_numpy(query_mask)
 
     def random_drop_rows(self, embeddings):
         """randomly mask num_drop rows in embeddings to be zero.
@@ -559,8 +670,10 @@ class StartEndDataset(Dataset):
                 if self.normalize_v:
                     _feat = l2_normalize_np_array(_feat)
                 v_feat_list.append(_feat)
-            # some features are slightly longer than the others
-            min_len = min([len(e) for e in v_feat_list])
+            lengths = [len(e) for e in v_feat_list]
+            if self.strict_data_contract and len(set(lengths)) != 1:
+                raise ValueError(f"Video stream length mismatch for {vid}: {lengths}")
+            min_len = min(lengths)
             v_feat_list = [e[:min_len] for e in v_feat_list]
             v_feat = np.concatenate(v_feat_list, axis=1)
 
@@ -590,23 +703,45 @@ class StartEndDataset(Dataset):
             # Feature files are keyed by the video stem, without a media extension.
             vid_for_path = self._vid_to_stem(vid) if vid else vid
             for _feat_dir in self.v_feat_dirs:
-                try:
+                if self.strict_data_contract:
                     _feat_path = join(_feat_dir, f"{vid_for_path}.npz")
-                    _feat = np.load(_feat_path)["features"][:self.max_v_l].astype(np.float32)
-                except:
+                    if not exists(_feat_path):
+                        raise FileNotFoundError(_feat_path)
+                    with np.load(_feat_path, allow_pickle=False) as archive:
+                        if set(archive.files) != {"features"}:
+                            raise ValueError(
+                                f"{_feat_path}: expected only key 'features', got {archive.files}"
+                            )
+                        _feat = archive["features"][:self.max_v_l].astype(np.float32)
+                else:
                     try:
-                        _feat_path = join(_feat_dir, f"{vid_for_path}.pt")
-                        _feat = torch.load(_feat_path)[:self.max_v_l].float().numpy()
+                        _feat_path = join(_feat_dir, f"{vid_for_path}.npz")
+                        _feat = np.load(_feat_path)["features"][:self.max_v_l].astype(np.float32)
                     except:
-                        _feat_path = join(_feat_dir, f"{vid_for_path}.npy")
-                        _feat = np.load(_feat_path)[:self.max_v_l].astype(np.float32)
+                        try:
+                            _feat_path = join(_feat_dir, f"{vid_for_path}.pt")
+                            _feat = torch.load(_feat_path)[:self.max_v_l].float().numpy()
+                        except:
+                            _feat_path = join(_feat_dir, f"{vid_for_path}.npy")
+                            _feat = np.load(_feat_path)[:self.max_v_l].astype(np.float32)
+                if self.strict_data_contract:
+                    if _feat.ndim != 2 or len(_feat) == 0:
+                        raise ValueError(f"{_feat_path}: expected a non-empty 2-D feature")
+                    if not np.isfinite(_feat).all():
+                        raise ValueError(f"{_feat_path}: contains NaN or Inf")
+                    if np.any(np.linalg.norm(_feat, axis=1) <= 1e-12):
+                        raise ValueError(f"{_feat_path}: contains a zero-norm real row")
                 if self.normalize_v:
                     _feat = l2_normalize_np_array(_feat)
                 v_feat_list.append(_feat)
-            # some features are slightly longer than the others
-            min_len = min([len(e) for e in v_feat_list])
+            lengths = [len(e) for e in v_feat_list]
+            if self.strict_data_contract and len(set(lengths)) != 1:
+                raise ValueError(f"Video stream length mismatch for {vid}: {lengths}")
+            min_len = min(lengths)
             v_feat_list = [e[:min_len] for e in v_feat_list]
             v_feat = np.concatenate(v_feat_list, axis=1)
+            if self.strict_data_contract and not np.isfinite(v_feat).all():
+                raise ValueError(f"Concatenated video feature contains NaN or Inf for {vid}")
         return torch.from_numpy(v_feat)  # (Lv, D)
 
 
@@ -632,6 +767,12 @@ def start_end_collate(batch):
             pad_data, mask_data = pad_sequences_1d([e[1][k] for e in batch], dtype=np.float32, fixed_length=None)
             batched_data[k] = torch.tensor(pad_data, dtype=torch.float32)
             continue
+        if k == "query_mask":
+            masks = [e[1][k].bool() for e in batch]
+            if len({tuple(mask.shape) for mask in masks}) != 1:
+                raise ValueError("query_mask must have a fixed shape within a batch")
+            batched_data[k] = torch.stack(masks, dim=0)
+            continue
         if k == 'qid':
             batched_data[k] = [e[1][k] for e in batch]
             continue
@@ -646,7 +787,9 @@ def start_end_collate(batch):
 def prepare_batch_inputs(batched_model_inputs, device, non_blocking=False):
     model_inputs = dict(
         src_txt=batched_model_inputs["query_feat"][0].to(device, non_blocking=non_blocking),
-        src_txt_mask=batched_model_inputs["query_feat"][1].to(device, non_blocking=non_blocking),
+        src_txt_mask=batched_model_inputs.get(
+            "query_mask", batched_model_inputs["query_feat"][1]
+        ).to(device, non_blocking=non_blocking),
         src_vid=batched_model_inputs["video_feat"][0].to(device, non_blocking=non_blocking),
         src_vid_mask=batched_model_inputs["video_feat"][1].to(device, non_blocking=non_blocking),
         vid=batched_model_inputs["vid"],

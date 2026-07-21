@@ -16,19 +16,59 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
 
-from metrics import (
-    DEFAULT_IOU_THRESHOLDS,
-    compute_G_mIoU,
-    compute_gmr_cls,
-    compute_mAP,
-    compute_mIoU,
-    compute_mIoU_plus,
-    compute_mR,
-    compute_mR_plus,
-    prepare_submission_for_gmiou,
-)
-from normalization import load_ts_window_cfg, normalize_ground_truth
-from utils import load_jsonl
+try:
+    from .metrics import (
+        DEFAULT_IOU_THRESHOLDS,
+        compute_G_mIoU,
+        compute_gmr_cls,
+        compute_mAP,
+        compute_mIoU,
+        compute_mIoU_plus,
+        compute_mR,
+        compute_mR_plus,
+        get_existence_score,
+        prepare_submission_for_gmiou,
+    )
+    from .normalization import load_ts_window_cfg, normalize_ground_truth
+    from .utils import load_jsonl
+except ImportError:  # Support direct execution as `python eval/eval_main.py`.
+    from metrics import (
+        DEFAULT_IOU_THRESHOLDS,
+        compute_G_mIoU,
+        compute_gmr_cls,
+        compute_mAP,
+        compute_mIoU,
+        compute_mIoU_plus,
+        compute_mR,
+        compute_mR_plus,
+        get_existence_score,
+        prepare_submission_for_gmiou,
+    )
+    from normalization import load_ts_window_cfg, normalize_ground_truth
+    from utils import load_jsonl
+
+
+def validate_qid_coverage(
+    submission: List[Dict[str, Any]], ground_truth: List[Dict[str, Any]]
+) -> None:
+    pred_qids = [item.get("qid") for item in submission]
+    gt_qids = [item.get("qid") for item in ground_truth]
+    if any(qid is None for qid in pred_qids):
+        raise ValueError("Every submission row must contain qid")
+    if any(qid is None for qid in gt_qids):
+        raise ValueError("Every ground-truth row must contain qid")
+    if len(set(pred_qids)) != len(pred_qids):
+        raise ValueError("Submission contains duplicate qids")
+    if len(set(gt_qids)) != len(gt_qids):
+        raise ValueError("Ground truth contains duplicate qids")
+    pred_set = set(pred_qids)
+    gt_set = set(gt_qids)
+    if pred_set != gt_set:
+        raise ValueError(
+            "Submission/GT qid coverage mismatch: "
+            f"missing_predictions={sorted(gt_set - pred_set, key=str)[:20]}, "
+            f"unexpected_predictions={sorted(pred_set - gt_set, key=str)[:20]}"
+        )
 
 
 def evaluate_gmr(
@@ -47,6 +87,7 @@ def evaluate_gmr(
     Compute the full GMR metric suite: CLS, G-mIoU@k for k_list, and mAP / mR /
     mR+ / mIoU / mIoU+ on positive queries.
     """
+    validate_qid_coverage(submission, ground_truth)
     start = time.time()
 
     n_pos = sum(1 for d in ground_truth if len(d.get("relevant_windows", [])) > 0)
@@ -72,6 +113,36 @@ def evaluate_gmr(
     brief.update(gmiou_res)
     results["G-mIoU_gate"] = gmiou_gate
     results["G-mIoU_detail"] = gmiou_res
+
+    pred_by_qid = {item["qid"]: item for item in submission}
+    gated_by_qid = {item["qid"]: item for item in gated_sub}
+    grouped: "OrderedDict[str, Any]" = OrderedDict()
+    grouped_gt = {
+        "null": [item for item in ground_truth if len(item.get("relevant_windows", [])) == 0],
+        "single": [item for item in ground_truth if len(item.get("relevant_windows", [])) == 1],
+        "multi": [item for item in ground_truth if len(item.get("relevant_windows", [])) >= 2],
+    }
+    null_metrics: "OrderedDict[str, Any]" = OrderedDict(
+        [("count", len(grouped_gt["null"]))]
+    )
+    for threshold in sorted(cls_thresholds):
+        false_positives = sum(
+            get_existence_score(pred_by_qid[item["qid"]])[0] > threshold
+            for item in grouped_gt["null"]
+        )
+        rate = false_positives / len(grouped_gt["null"]) if grouped_gt["null"] else 0.0
+        key = f"FPR@{threshold:.2f}"
+        null_metrics[key] = round(100 * rate, 2)
+        brief[f"Null-{key}"] = null_metrics[key]
+    grouped["null"] = null_metrics
+    for group_name in ("single", "multi"):
+        gt_group = grouped_gt[group_name]
+        gated_group = [gated_by_qid[item["qid"]] for item in gt_group]
+        metrics_group = compute_G_mIoU(gated_group, gt_group, k_list=k_list)
+        grouped[group_name] = {"count": len(gt_group), **metrics_group}
+        for key, value in metrics_group.items():
+            brief[f"{group_name.title()}-{key}"] = value
+    results["grouped"] = grouped
 
     pos_qids = {d["qid"] for d in ground_truth if len(d.get("relevant_windows", [])) > 0}
     gt_pos = [d for d in ground_truth if d["qid"] in pos_qids]
@@ -187,21 +258,14 @@ def main() -> None:
 
     pred_qids = {e["qid"] for e in submission if isinstance(e, dict) and "qid" in e}
     gt_qids = {e["qid"] for e in gt}
-    shared = pred_qids & gt_qids
-
-    submission = [e for e in submission if e.get("qid") in shared]
-    gt = [e for e in gt if e.get("qid") in shared]
 
     if verbose:
         print(f"[eval_main] GT: {json.dumps(gt_stats, ensure_ascii=False)}")
         print(
-            f"[eval_main] shared={len(shared)}, "
+            f"[eval_main] submission={len(pred_qids)}, gt={len(gt_qids)}, "
             f"gt_only={len(gt_qids - pred_qids)}, "
             f"pred_only={len(pred_qids - gt_qids)}"
         )
-
-    if len(shared) == 0:
-        raise ValueError("Submission and GT have no overlapping qids; evaluation cannot run.")
 
     results = evaluate_gmr(
         submission,

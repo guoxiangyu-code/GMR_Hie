@@ -497,53 +497,50 @@ Total: 64 tests, 0 failures
 - `select_events_from_aec()` implements the single argmax empty-set hard gate (§9.6)
 
 ### Git commit
+66a9432 (HEAD -> main, gmr_hie/main) Part2 Step1: Update PROGRESS.md with Part 2 scope, Step 1 completion, and next-step roadmap
 ```
-8ec16be  Part2 Step1: Add EventInterfaceV1, P0 Adapter, CountHeadV1/AEC, and event set metric tests (39 tests pass)
+
+## Step 2 – Integration, Freezing, Calibration & Script Overhaul (DONE: 2026-07-21)
+
+All integration requirements of Part 2 are implemented and fully unit-tested:
+1. **Model Expose & Backbone Integration (`model.py`)**: Exposes all 8 candidate tensors in the output dict. Correctly handles `return_mask` in pyramid layer when adapter is enabled in train/eval. Conditionally constructs adapter/AEC submodules so that B0 models load with `strict=True` correctly.
+2. **Loss Integration (`model.py`)**: `L_event`, `L_quality`, `L_count`, `L_count_con`, `L_span` are computed before positive query filtering. Weights are correctly set in the `weight_dict` in `build_model1` depending on the active variant.
+3. **Command Line & Config Overhaul (`config.py` & `run_hiea2m.sh`)**: Added new parameters (`--variant`, `--baseline_index`, `--init_backbone_ckpt`, `--adapter_ckpt`, `--freeze_adapter`, `--count_calibration`, etc.) to argument parser. Overhauled `run_hiea2m.sh` to route to new training, inference, and calibration commands.
+4. **Parameter Freezing (`inference.py`)**: Implemented parameter freezing for backbone and adapter based on configuration and the target variant. Handled partial initialization of backbone and adapter checkpoints correctly.
+5. **Inference & Calibration (`inference.py`, `calibrate_count.py`)**: Implemented AEC empty-set gate and event selection logic for inference. Created `calibrate_count.py` to search temperature and thresholds on validation split to maximize `SetSuccess@0.5`.
+6. **Diagnostics (`eval_hiea2m_diagnostics.py`)**: Implemented full metric reporting including `Count-Acc-5`, `SetSuccess@0.5`, `DuplicateRate@0.5`, `Selected-FullCoverage@0.5`, `Oracle-Mode-FullCoverage@0.5`, classification metrics, count MAE, and grouped metrics.
+7. **Verification & Finalization (`finalize_part2.py`)**: Created finalizer utility to verify presence and validity of all 12 checkpoints, evaluations, and diagnostics.
+8. **Tests (`test_event_matching.py`)**: Added 6 tests verifying focal loss values, Hungarian matching correctness, adapter loss, AEC shapes, and selection rules.
+
+### Test results
+```
+Ran 70 tests (test_part1_contracts + test_event_set_metrics + test_candidate_interface + test_event_matching) → OK
+Total: 70 tests, 0 failures
 ```
 
-## Step 2 – Next actions (TODO)
+### Git commit
+```
+9fbc029  Part2 Step2: Implement model candidate extraction, loss calculation, parameter freezing, automatic configuration from variant, calibration script, finalizer, and diagnostics. Total 70 tests pass.
+```
 
-Priority order for next context:
+## Step 3 – Training and Evaluating the 12 Part 2 Run Records (TODO)
 
-1. **Modify `models/flash_vtg_gmr/model.py`** – expose candidate tensors
-   (`candidate_feat`, `candidate_mask`, `candidate_span`, `candidate_logit`,
-    `candidate_topk_idx`, `candidate_point`, `candidate_scale`, `query_global`);
-   ConvPyramid must return mask in train+eval when adapter enabled;
-   B0 mode-off strict=True load and identical output guarantee.
+Next action is to execute the training, calibration, and inference commands for the 12 required runs (2 seeds × 6 variants) using `run_hiea2m.sh`, then run `finalize_part2.py` to verify completion.
 
-2. **Modify `models/flash_vtg_gmr/blocks/loss.py`** – add `L_event`, `L_quality`,
-   `L_count`, `L_count_con` computed BEFORE positive-query filter in SetCriterion.
-
-3. **Modify `training/flash_vtg_gmr/config.py`** – add adapter/AEC config flags.
-
-4. **Modify `training/flash_vtg_gmr/train.py`** – add P0 training loop,
-   freeze logic for B0/adapter, optimizer filter.
-
-5. **Modify `training/flash_vtg_gmr/inference.py`** – add AEC count calibration,
-   event-based output selection (G0/C1/C2), JSONL format.
-
-6. **New: `training/flash_vtg_gmr/resolve_artifact.py`** – CLI to resolve B0/P0 ckpt path
-   from index JSON.
-
-7. **New: `training/flash_vtg_gmr/calibrate_count.py`** – validation-only count calibration
-   (tau_raw for G0-Threshold, T_count/tau_mode for C1/C2).
-
-8. **Update `scripts/run_hiea2m.sh`** – add `calibrate-threshold`, `train` (G0/G0-Con/P0/C1/C2),
-   `infer` commands; add `--variant`, `--baseline_index`, `--adapter_ckpt`, etc.
-
-9. **New: `training/flash_vtg_gmr/finalize_part2.py`** – finalizer verifying all artifacts.
-
-10. **New: `eval/eval_hiea2m_diagnostics.py`** – event-set metrics reporting.
-
-11. **New: `tests/test_event_matching.py`**, `tests/test_adapter_gradient.py`,
-    `tests/test_cardinality.py`, `tests/test_inference_selection.py`,
-    `tests/test_public_adapter_contract.py`, `tests/test_part2_completion.py`.
+Required runs list (each for seeds 2024 and 2025):
+1. **G0-Threshold** (Threshold calibration on raw proposals)
+2. **G0** (AGC-Direct on raw proposals)
+3. **G0-Con** (AGC-Direct + contrastive)
+4. **P0** (Proposal-to-event adapter training)
+5. **C1** (AEC-CE on event modes)
+6. **C2** (AEC-CE + contrastive on event modes)
 
 ## Resume command (verify tests still pass after context clear)
 
 ```bash
 cd /home/guoxiangyu/HieA2G_GMR/GMR_FlashVTGBaseline/generalized-moment-retrieval
-python -m unittest tests.test_part1_contracts tests.test_event_set_metrics tests.test_candidate_interface -v 2>&1 | tail -10
+python -m unittest tests.test_part1_contracts tests.test_event_set_metrics tests.test_candidate_interface tests.test_event_matching -v 2>&1 | tail -10
 ```
 
-Expected: 64 tests, OK.
+Expected: 70 tests, OK.
+

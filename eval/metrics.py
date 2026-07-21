@@ -17,10 +17,16 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from utils import (
-    compute_average_precision_detection,
-    compute_temporal_iou_batch_cross,
-)
+try:
+    from .utils import (
+        compute_average_precision_detection,
+        compute_temporal_iou_batch_cross,
+    )
+except ImportError:  # Support `python eval/metrics.py` and the legacy CLI layout.
+    from utils import (
+        compute_average_precision_detection,
+        compute_temporal_iou_batch_cross,
+    )
 
 DEFAULT_IOU_THRESHOLDS = np.linspace(0.5, 0.95, 10)
 
@@ -303,7 +309,7 @@ def _compute_auroc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     tpr = np.concatenate([[0], tpr[distinct]])
     fpr = np.concatenate([[0], fpr[distinct]])
 
-    return float(np.trapz(tpr, fpr))
+    return float(np.trapezoid(tpr, fpr))
 
 
 def get_existence_score(pred: Dict[str, Any]) -> Tuple[float, str]:

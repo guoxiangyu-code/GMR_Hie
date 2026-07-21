@@ -8,7 +8,8 @@ import torch.nn.functional as F
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from models.flash_vtg_gmr.event_adapter import (
-    hungarian_matching, compute_adapter_losses, ProposalToEventAdapter, focal_loss_binary
+    balanced_focal_loss_binary, hungarian_matching, compute_adapter_losses,
+    ProposalToEventAdapter, focal_loss_binary, p0_inference
 )
 from models.flash_vtg_gmr.event_cardinality import (
     AdaptiveEventCardinality, compute_effective_number_weights, select_events_from_aec
@@ -33,6 +34,22 @@ class TestEventMatchingAndLosses(unittest.TestCase):
         loss_incorrect_neg = focal_loss_binary(logits_pos, target_neg)
         
         self.assertLess(loss_correct_neg.item(), loss_incorrect_neg.item())
+
+    def test_focal_default_upweights_positive_targets(self):
+        """The P0 default gives a positive mode 3x the weight of a negative."""
+        zero_logit = torch.tensor([0.0])
+        positive = focal_loss_binary(zero_logit, torch.tensor([1.0]))
+        negative = focal_loss_binary(zero_logit, torch.tensor([0.0]))
+        self.assertAlmostEqual(positive.item() / negative.item(), 3.0, places=6)
+
+    def test_allk_balanced_focal_is_not_diluted_by_negative_count(self):
+        one_negative = balanced_focal_loss_binary(
+            torch.zeros(2), torch.tensor([1.0, 0.0])
+        )
+        many_negatives = balanced_focal_loss_binary(
+            torch.zeros(50), torch.tensor([1.0] + [0.0] * 49)
+        )
+        self.assertAlmostEqual(one_negative.item(), many_negatives.item(), places=6)
 
     def test_hungarian_matching_toy_case(self):
         """Hungarian matching should correctly match overlapping regions."""
@@ -71,6 +88,42 @@ class TestEventMatchingAndLosses(unittest.TestCase):
         # P0-R variant should have span loss
         losses_r = compute_adapter_losses(event_logit, quality_logit, event_span, event_mask, targets, variant="P0-R")
         self.assertIn("loss_span", losses_r)
+
+    def test_allk_bypasses_seed_selection_and_moves_dense_spans(self):
+        from unittest.mock import patch
+
+        B, K, D = 1, 12, 256
+        adapter = ProposalToEventAdapter(feat_dim=D, variant="P0-AllK")
+        starts = torch.linspace(0.0, 0.8, K).view(1, K)
+        spans = torch.stack([starts, (starts + 0.1).clamp(max=1.0)], dim=-1)
+        mask = torch.ones(B, K, dtype=torch.bool)
+        with patch(
+            "models.flash_vtg_gmr.event_adapter.select_seeds",
+            side_effect=AssertionError("semantic seed selection must not run"),
+        ):
+            out = adapter(
+                torch.randn(B, K, D), mask, spans, torch.randn(B, K),
+                torch.ones(B, K), torch.randn(B, D),
+            )
+
+        self.assertEqual(out["event_span"].shape, (B, K, 2))
+        self.assertTrue(out["event_mask"].all())
+        self.assertTrue(torch.allclose(out["event_span"], spans, atol=2e-5))
+
+        losses = compute_adapter_losses(
+            out["event_logit"], out["quality_logit"], out["event_span"],
+            out["event_mask"],
+            [{"is_null": False, "relevant_windows_norm": [[0.2, 0.3], [0.21, 0.31]]}],
+            variant="P0-AllK",
+        )
+        self.assertIn("loss_span", losses)
+        sum(losses.values()).backward()
+        self.assertGreater(
+            adapter.span_residual_head[-1].weight.grad.abs().sum().item(), 0.0
+        )
+
+        iface = p0_inference(out, torch.randn(B, D))
+        self.assertEqual(iface.event_feat.shape, (B, 10, D))
 
     def test_effective_number_weighting_normalization(self):
         """compute_effective_number_weights should return normalized and clipped weights."""

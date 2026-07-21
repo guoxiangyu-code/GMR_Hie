@@ -67,14 +67,14 @@ def replay_prediction(row: dict, calibration: dict, decode_duration: float) -> l
             else:
                 above = [item for item in ranked if item[2] >= tau_raw]
                 chosen = ranked[:4] if len(above) < 4 else above[:10]
-    elif variant in {"P0", "P0-R", "C1", "C2"}:
+    elif variant in {"P0", "P0-R", "P0-AllK", "C1", "C2"}:
         ranked = sorted(
             ([mode[0], mode[1], _sigmoid(float(mode[2])) * _sigmoid(float(mode[3])),
               _sigmoid(float(mode[2]))]
              for mode in row["oracle_mode_windows"]),
             key=lambda item: item[2], reverse=True,
         )
-        if variant in {"P0", "P0-R"}:
+        if variant in {"P0", "P0-R", "P0-AllK"}:
             chosen = [item[:3] for item in ranked if item[3] >= 0.5]
         elif pred_count == 0:
             chosen = []
@@ -104,7 +104,7 @@ def validate_predictions(predictions: list[dict], ground_truth: list[dict], cali
     variant = next(iter(variants))
     if calibration and calibration.get("variant") != variant:
         raise ValueError("Calibration/prediction variant mismatch")
-    if variant not in {"P0", "P0-R"} and not calibration:
+    if variant not in {"P0", "P0-R", "P0-AllK"} and not calibration:
         raise ValueError(f"{variant} replay requires validation calibration")
 
     mismatches = []

@@ -1117,7 +1117,7 @@ def build_model1(args):
     if getattr(args, "enable_adapter", False) and not getattr(args, "freeze_adapter", False):
         weight_dict["loss_event"] = 1.0
         weight_dict["loss_quality"] = 1.0
-        if getattr(args, "adapter_variant", "P0") == "P0-R":
+        if getattr(args, "adapter_variant", "P0") in {"P0-R", "P0-AllK"}:
             weight_dict["loss_span"] = 1.0
 
     if getattr(args, "enable_aec", False):

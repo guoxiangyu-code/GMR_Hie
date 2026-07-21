@@ -1,6 +1,8 @@
 import os
 import time
 import json
+import copy
+import hashlib
 import pprint
 import random
 import numpy as np
@@ -36,9 +38,12 @@ from training.flash_vtg_gmr.reproducibility import (
 from training.flash_vtg_gmr.contracts import sha256_file
 
 
+P0_ALLK_SPLIT_SEED = 20240721
+
+
 def _selection_metric_names(variant):
-    if variant in {"P0", "P0-R"}:
-        return ["AdapterScore"]
+    if variant in {"P0", "P0-R", "P0-AllK"}:
+        return ["AdapterScore", "AdapterTieBreak"]
     if variant in {"G0", "G0-Con", "C1", "C2"}:
         return ["SetSuccess@0.5", "MR-full-mAP", "Count-Acc-5"]
     return ["MR-full-mAP"]
@@ -50,6 +55,93 @@ def _training_command(opt):
         return None
     with open(path, "r", encoding="utf-8") as handle:
         return handle.read().strip()
+
+
+def _split_train_fit_dev(dataset, seed, dev_fraction=0.15):
+    """Create deterministic video-disjoint views of the canonical train set.
+
+    Formal validation has already been inspected during Part 2.  P0-AllK uses
+    a train-internal development split for checkpoint selection so the new
+    architecture is not tuned on that outer split again.
+    """
+    groups = defaultdict(list)
+    for index, meta in enumerate(dataset.data):
+        groups[str(meta["vid"])].append(index)
+    group_items = sorted(groups.items())
+    target_size = max(1, int(round(len(dataset) * float(dev_fraction))))
+
+    def balance_key(meta):
+        source = meta.get("source", meta.get("dataset_source", "unknown"))
+        count = len(meta.get("relevant_windows") or [])
+        return str(source), "null" if count == 0 else ("single" if count == 1 else "multi")
+
+    overall = defaultdict(int)
+    for meta in dataset.data:
+        overall[balance_key(meta)] += 1
+
+    best = None
+    for trial in range(128):
+        shuffled = list(group_items)
+        random.Random(int(seed) * 1009 + trial).shuffle(shuffled)
+        chosen = []
+        size = 0
+        for vid, indices in shuffled:
+            if size >= target_size:
+                break
+            chosen.append((vid, indices))
+            size += len(indices)
+        dev_counts = defaultdict(int)
+        for _, indices in chosen:
+            for index in indices:
+                dev_counts[balance_key(dataset.data[index])] += 1
+        distribution_error = sum(
+            abs(dev_counts[key] / max(size, 1) - overall[key] / len(dataset))
+            for key in overall
+        )
+        objective = abs(size - target_size) / len(dataset) + distribution_error
+        if best is None or objective < best[0]:
+            best = (objective, chosen)
+
+    dev_vids = {vid for vid, _ in best[1]}
+    dev_indices = [i for i, meta in enumerate(dataset.data) if str(meta["vid"]) in dev_vids]
+    fit_indices = [i for i, meta in enumerate(dataset.data) if str(meta["vid"]) not in dev_vids]
+    if not fit_indices or not dev_indices:
+        raise RuntimeError("P0-AllK train-fit/train-dev split produced an empty partition")
+
+    def view(indices, split_name):
+        result = copy.copy(dataset)
+        result.data = [dataset.data[i] for i in indices]
+        result.preloaded_data = [dataset.preloaded_data[i] for i in indices]
+        result.split = split_name
+        result._epoch = 0
+        return result
+
+    fit = view(fit_indices, "train-fit")
+    dev = view(dev_indices, "train-dev")
+
+    def distribution(rows):
+        counts = defaultdict(int)
+        for meta in rows:
+            counts["/".join(balance_key(meta))] += 1
+        return dict(sorted(counts.items()))
+
+    record = {
+        "schema": "p0-allk.train-dev.v1",
+        "seed": int(seed),
+        "group_key": "vid",
+        "dev_fraction_requested": float(dev_fraction),
+        "fit_count": len(fit),
+        "dev_count": len(dev),
+        "fit_video_count": len({str(meta["vid"]) for meta in fit.data}),
+        "dev_video_count": len(dev_vids),
+        "fit_distribution": distribution(fit.data),
+        "dev_distribution": distribution(dev.data),
+        "dev_videos": sorted(dev_vids),
+    }
+    record["content_sha256"] = hashlib.sha256(
+        json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return fit, dev, record
 
 
 def _strict_checkpoint_payload(
@@ -87,12 +179,16 @@ def _strict_checkpoint_payload(
         "event_interface_schema": "EventInterfaceV1" if getattr(opt, "enable_adapter", False) else None,
         "event_interface_metadata": {
             "schema": "EventInterfaceV1",
-            "span_source": "greedy_seed_spans",
+            "span_source": (
+                "all_candidate_continuous_spans"
+                if variant == "P0-AllK" else "greedy_seed_spans"
+            ),
             "selection_threshold": 0.5,
-            "max_modes": int(getattr(opt, "event_max_modes", 10)),
-        } if variant in {"P0", "P0-R"} else None,
+            "max_modes": 50 if variant == "P0-AllK" else int(getattr(opt, "event_max_modes", 10)),
+            "compatibility_view_modes": 10,
+        } if variant in {"P0", "P0-R", "P0-AllK"} else None,
         "checkpoint_boundary": "epoch",
-        "selection_split": "val",
+        "selection_split": getattr(opt, "selection_split", "val"),
         "selection_metric_names": _selection_metric_names(variant),
         "selection_key": list(prev_best_key),
         "validation_artifacts": validation_records,
@@ -254,7 +350,7 @@ def train(model, criterion, optimizer, lr_scheduler, train_dataset, val_dataset,
         start_epoch = opt.start_epoch
     iteration = max(start_epoch, 0) * len(train_loader)
     save_submission_filename = "latest_{}_{}_preds.jsonl".format(
-        opt.dset_name, opt.eval_split_name
+        opt.dset_name, getattr(opt, "selection_split", opt.eval_split_name)
     )
 
     for epoch_i in trange(start_epoch, opt.n_epoch, desc="Epoch"):
@@ -316,8 +412,15 @@ def train(model, criterion, optimizer, lr_scheduler, train_dataset, val_dataset,
                     )
                 )
 
-            if getattr(opt, "variant", None) in {"P0", "P0-R"}:
-                stop_key = (float(metrics["brief"]["AdapterScore"]),)
+            if getattr(opt, "variant", None) in {"P0", "P0-R", "P0-AllK"}:
+                # AdapterScore is thresholded and can stay exactly tied across
+                # epochs (most notably when every mode is below 0.5).  Resolve
+                # exact ties with the continuous validation adapter objective;
+                # never use training loss or epoch order as a preference.
+                stop_key = (
+                    float(metrics["brief"]["AdapterScore"]),
+                    float(metrics["brief"]["AdapterTieBreak"]),
+                )
             elif getattr(opt, "variant", None) in {"G0", "G0-Con", "C1", "C2"}:
                 stop_key = (
                     float(metrics["brief"]["SetSuccess@0.5"]),
@@ -536,7 +639,20 @@ def start_training():
     dataset_config["data_path"] = opt.train_path
     train_dataset = StartEndDataset(**dataset_config)
 
-    if opt.eval_path is not None:
+    if getattr(opt, "variant", None) == "P0-AllK":
+        train_dataset, eval_dataset, split_record = _split_train_fit_dev(
+            train_dataset, P0_ALLK_SPLIT_SEED
+        )
+        opt.selection_split = "train-dev"
+        split_path = os.path.join(opt.results_dir, "train_dev_split.json")
+        with open(split_path, "w", encoding="utf-8") as handle:
+            json.dump(split_record, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        logger.info(
+            "P0-AllK video-disjoint split: fit=%d dev=%d manifest=%s",
+            len(train_dataset), len(eval_dataset), split_path,
+        )
+    elif opt.eval_path is not None:
         dataset_config["data_path"] = opt.eval_path
         dataset_config["txt_drop_ratio"] = 0
         dataset_config["q_feat_dir"] = opt.t_feat_dir.replace("sub_features", "text_features")  # for pretraining
@@ -621,7 +737,8 @@ if __name__ == "__main__":
         "C1",
         "C2",
     }
-    if not debug and eval_path is not None and not needs_count_calibration:
+    skip_outer_inference = needs_count_calibration or getattr(opt, "variant", None) == "P0-AllK"
+    if not debug and eval_path is not None and not skip_outer_inference:
         input_args = [
             opt.config,
             "--resume",
@@ -644,4 +761,9 @@ if __name__ == "__main__":
             "Skipping post-training inference for %s; calibration and formal "
             "inference are performed by finalize_part2_run.sh",
             opt.variant,
+        )
+    elif getattr(opt, "variant", None) == "P0-AllK":
+        logger.info(
+            "Skipping automatic outer-validation inference for P0-AllK; "
+            "checkpoint selection used the locked train-dev split."
         )

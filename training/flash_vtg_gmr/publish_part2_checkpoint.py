@@ -35,7 +35,7 @@ def main() -> None:
 
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     variant = checkpoint.get("variant")
-    if variant not in {"G0", "G0-Con", "P0", "P0-R", "C1", "C2"}:
+    if variant not in {"G0", "G0-Con", "P0", "P0-R", "P0-AllK", "C1", "C2"}:
         raise ValueError(f"Unsupported trainable Part 2 variant: {variant!r}")
     baseline = json.loads(args.baseline_index.read_text(encoding="utf-8"))
     seed = int(checkpoint.get("seed", -1))
@@ -49,7 +49,7 @@ def main() -> None:
 
     metrics = json.loads(args.validation_metrics.read_text(encoding="utf-8"))
     brief = metrics.get("brief", {})
-    names = ["AdapterScore"] if variant in {"P0", "P0-R"} else [
+    names = ["AdapterScore", "AdapterTieBreak"] if variant in {"P0", "P0-R", "P0-AllK"} else [
         "SetSuccess@0.5", "MR-full-mAP", "Count-Acc-5"
     ]
     key = [float(brief[name]) for name in names]
@@ -76,13 +76,17 @@ def main() -> None:
                 "sha256": sha256_file(args.validation_metrics),
             },
         },
-        "event_interface_schema": "EventInterfaceV1" if variant in {"P0", "P0-R", "C1", "C2"} else None,
+        "event_interface_schema": "EventInterfaceV1" if variant in {"P0", "P0-R", "P0-AllK", "C1", "C2"} else None,
         "event_interface_metadata": {
             "schema": "EventInterfaceV1",
-            "span_source": "greedy_seed_spans",
+            "span_source": (
+                "all_candidate_continuous_spans"
+                if variant == "P0-AllK" else "greedy_seed_spans"
+            ),
             "selection_threshold": 0.5,
-            "max_modes": int(getattr(opt, "event_max_modes", 10)),
-        } if variant in {"P0", "P0-R"} else checkpoint.get("event_interface_metadata"),
+            "max_modes": 50 if variant == "P0-AllK" else int(getattr(opt, "event_max_modes", 10)),
+            "compatibility_view_modes": 10,
+        } if variant in {"P0", "P0-R", "P0-AllK"} else checkpoint.get("event_interface_metadata"),
     })
     command_path = args.checkpoint.parent / "command.txt"
     if command_path.is_file():

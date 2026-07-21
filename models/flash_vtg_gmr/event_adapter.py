@@ -8,6 +8,8 @@ Implements the full Part 2 Section 5 specification:
   - P0-selection: event_span frozen from seed spans (no regression)
   - Hungarian matching on detached cost, focal event loss, SmoothL1 quality loss
   - P0 inference: threshold 0.5 on sigmoid(event_logit), no NMS
+  - P0-AllK recovery: every valid proposal is a movable temporal hypothesis;
+    semantic-diversity seed selection is bypassed entirely
 
 Design rules enforced here (tests in tests/test_event_matching.py):
   - event_mask is True=valid throughout
@@ -44,7 +46,7 @@ EVENT_THRESHOLD: float = 0.5     # P0 inference threshold, fixed
 def focal_loss_binary(
     logits: torch.Tensor,
     targets: torch.Tensor,
-    alpha: float = 0.25,
+    alpha: float = 0.75,
     gamma: float = 2.0,
     reduction: str = "mean",
 ) -> torch.Tensor:
@@ -59,6 +61,28 @@ def focal_loss_binary(
     if reduction == "sum":
         return loss.sum()
     return loss
+
+
+def balanced_focal_loss_binary(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+) -> torch.Tensor:
+    """Average matched and unmatched groups independently.
+
+    P0-AllK may have one matched event and forty-nine unmatched candidates.
+    A flat mean would reintroduce the class-count imbalance even with positive
+    focal alpha=0.75.  The existing focal alpha is retained inside each group.
+    """
+    group_losses = []
+    positive = targets > 0.5
+    negative = ~positive
+    if positive.any():
+        group_losses.append(focal_loss_binary(logits[positive], targets[positive]))
+    if negative.any():
+        group_losses.append(focal_loss_binary(logits[negative], targets[negative]))
+    if not group_losses:
+        return logits.sum() * 0.0
+    return torch.stack(group_losses).mean()
 
 
 # ── RelationEncoder ────────────────────────────────────────────────────────────
@@ -224,7 +248,7 @@ class ProposalToEventAdapter(nn.Module):
         num_modes: int = NUM_MODES,
         num_heads: int = 4,
         dim_ff: int = 512,
-        variant: str = "P0",  # "P0" or "P0-R" (P0-R adds residual span regression)
+        variant: str = "P0",  # P0, P0-R, or seed-free P0-AllK
         residual_rho: float = 0.5,
     ) -> None:
         super().__init__()
@@ -232,6 +256,8 @@ class ProposalToEventAdapter(nn.Module):
         self.num_modes = num_modes
         self.variant = variant
         self.residual_rho = residual_rho
+        if variant not in {"P0", "P0-R", "P0-AllK"}:
+            raise ValueError(f"Unsupported adapter variant: {variant!r}")
 
         # RelationEncoder: candidate → relation feature r_i
         self.relation_encoder = RelationEncoder(feat_dim)
@@ -248,8 +274,8 @@ class ProposalToEventAdapter(nn.Module):
         self.event_head = nn.Linear(feat_dim, 1)    # → event_logit
         self.quality_head = nn.Linear(feat_dim, 1)  # → quality_logit
 
-        # P0-R only: residual span head (zero-init last layer)
-        if variant == "P0-R":
+        # Trainable-span variants use a zero-initialised residual head.
+        if variant in {"P0-R", "P0-AllK"}:
             self.span_residual_head = nn.Sequential(
                 nn.Linear(feat_dim, feat_dim),
                 nn.GELU(),
@@ -258,6 +284,56 @@ class ProposalToEventAdapter(nn.Module):
             # Zero-init last layer weights/biases for P0-R (§5.3)
             nn.init.zeros_(self.span_residual_head[-1].weight)
             nn.init.zeros_(self.span_residual_head[-1].bias)
+
+    def _forward_allk(
+        self,
+        r: torch.Tensor,
+        candidate_mask: torch.Tensor,
+        candidate_span: torch.Tensor,
+        query_global: torch.Tensor,
+    ) -> dict:
+        """Verify every proposal and predict a movable temporal set.
+
+        Proposal features are anchors, not hard pointers.  The output can move
+        globally in logit(center, width) space, while zero initialisation makes
+        the untrained model reproduce the raw proposal spans exactly.
+        """
+        B, K, _ = r.shape
+        event_mask = candidate_mask.bool()
+        query_proj = self.W_query(query_global).unsqueeze(1).expand(-1, K, -1)
+        event_emb = self.W_seed(r) + query_proj
+        event_emb = event_emb * event_mask.unsqueeze(-1).float()
+
+        event_feat = self.decoder(event_emb, event_mask, r, candidate_mask)
+        event_logit = self.event_head(event_feat).squeeze(-1)
+        quality_logit = self.quality_head(event_feat).squeeze(-1)
+        event_logit = event_logit.masked_fill(~event_mask, -1e4)
+        quality_logit = quality_logit.masked_fill(~event_mask, -1e4)
+
+        anchor_span = candidate_span.detach()
+        anchor_center = ((anchor_span[..., 0] + anchor_span[..., 1]) * 0.5).clamp(1e-4, 1 - 1e-4)
+        anchor_width = (anchor_span[..., 1] - anchor_span[..., 0]).clamp(1e-4, 1 - 1e-4)
+        anchor_cw_logit = torch.stack(
+            [torch.logit(anchor_center), torch.logit(anchor_width)], dim=-1
+        )
+        pred_cw = torch.sigmoid(anchor_cw_logit + self.span_residual_head(event_feat))
+        pred_center, pred_width = pred_cw.unbind(dim=-1)
+        event_span = torch.stack(
+            [pred_center - 0.5 * pred_width, pred_center + 0.5 * pred_width], dim=-1
+        ).clamp(0.0, 1.0)
+        event_span = event_span * event_mask.unsqueeze(-1).float()
+
+        proposal_idx = torch.arange(K, device=r.device).unsqueeze(0).expand(B, -1)
+        proposal_idx = proposal_idx.masked_fill(~event_mask, -1)
+        return dict(
+            event_feat=event_feat,
+            event_logit=event_logit,
+            quality_logit=quality_logit,
+            event_span=event_span,
+            event_mask=event_mask,
+            seed_idx=proposal_idx,
+            seed_span=anchor_span,
+        )
 
     def forward(
         self,
@@ -275,6 +351,9 @@ class ProposalToEventAdapter(nn.Module):
         # ── Step 1: relation features (trainable, enters gradients) ───────────
         r = self.relation_encoder(candidate_feat, candidate_span, candidate_scale, candidate_logit)
         # (B, K, D) – these enter the decoder memory and the seed init → gradient flows
+
+        if self.variant == "P0-AllK":
+            return self._forward_allk(r, candidate_mask, candidate_span, query_global)
 
         # ── Step 2: diversity seed selection on DETACHED quantities ──────────
         with torch.no_grad():
@@ -476,8 +555,12 @@ def compute_adapter_losses(
         for mi in mode_inds:
             event_target[mi] = 1.0
 
-        # focal event loss
-        loss_e = focal_loss_binary(logit_b, event_target, reduction="mean")
+        # P0-AllK normalises positives and negatives separately so a single
+        # event is not diluted by the remaining dense candidates.
+        if variant == "P0-AllK":
+            loss_e = balanced_focal_loss_binary(logit_b, event_target)
+        else:
+            loss_e = focal_loss_binary(logit_b, event_target, reduction="mean")
         total_event_loss = total_event_loss + loss_e
 
         # quality target = max_j tIoU(event_span_m, gt_j) – detached
@@ -498,8 +581,8 @@ def compute_adapter_losses(
         loss_q = F.smooth_l1_loss(torch.sigmoid(qual_b), quality_target, reduction="mean")
         total_quality_loss = total_quality_loss + loss_q
 
-        # P0-R: span regression for matched modes only
-        if variant == "P0-R" and len(mode_inds) > 0:
+        # Trainable-span variants: localization regression for matched modes.
+        if variant in {"P0-R", "P0-AllK"} and len(mode_inds) > 0:
             m_t = torch.tensor(mode_inds, dtype=torch.long, device=device)
             g_t = torch.tensor(gt_inds, dtype=torch.long, device=device)
             pred_spans_matched = span_b[m_t]
@@ -528,7 +611,7 @@ def compute_adapter_losses(
         "loss_event": total_event_loss,
         "loss_quality": total_quality_loss,
     }
-    if variant == "P0-R":
+    if variant in {"P0-R", "P0-AllK"}:
         losses["loss_span"] = total_span_loss
     return losses
 
@@ -551,6 +634,33 @@ def p0_inference(
     quality_logit = adapter_out["quality_logit"]
     event_span = adapter_out["event_span"]
     event_mask = adapter_out["event_mask"]
+
+    # EventInterfaceV1 remains a ten-slot compatibility view.  P0-AllK performs
+    # learned verification over every candidate before this post-decoder Top-10
+    # projection; no information is discarded before set reasoning.
+    if event_feat.shape[1] != NUM_MODES:
+        if event_feat.shape[1] < NUM_MODES:
+            raise ValueError(
+                f"Dense adapter emitted {event_feat.shape[1]} modes; expected at least {NUM_MODES}"
+            )
+        mode_score = torch.sigmoid(event_logit) * torch.sigmoid(quality_logit)
+        mode_score = mode_score.masked_fill(~event_mask, -1.0)
+        top_idx = mode_score.topk(NUM_MODES, dim=1).indices
+
+        def _gather(value: torch.Tensor) -> torch.Tensor:
+            if value.ndim == 2:
+                return torch.gather(value, 1, top_idx)
+            return torch.gather(
+                value,
+                1,
+                top_idx.unsqueeze(-1).expand(-1, -1, value.shape[-1]),
+            )
+
+        event_feat = _gather(event_feat)
+        event_logit = _gather(event_logit)
+        quality_logit = _gather(quality_logit)
+        event_span = _gather(event_span)
+        event_mask = _gather(event_mask)
 
     return EventInterfaceV1(
         event_feat=event_feat,

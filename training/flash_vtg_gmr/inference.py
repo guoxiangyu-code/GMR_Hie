@@ -387,7 +387,7 @@ def select_predictions_for_inference(outputs, opt, meta):
             res.append([s * duration, e * duration, score])
         return res
 
-    elif variant in ("P0", "P0-R"):
+    elif variant in ("P0", "P0-R", "P0-AllK"):
         event_span = outputs["event_span"][0]  # (M, 2)
         event_logit = outputs["event_logit"][0]  # (M,)
         quality_logit = outputs["quality_logit"][0]  # (M,)
@@ -766,6 +766,22 @@ def eval_epoch(
             else:
                 adapter_score = 0.0
             metrics["brief"]["AdapterScore"] = adapter_score
+            if getattr(opt, "variant", None) in {"P0", "P0-R", "P0-AllK"}:
+                val_adapter_loss = sum(
+                    float(eval_loss_meters[name].avg)
+                    for name in (
+                        ("loss_event", "loss_quality", "loss_span")
+                        if getattr(opt, "variant", None) == "P0-AllK"
+                        else ("loss_event", "loss_quality")
+                    )
+                )
+                if not np.isfinite(val_adapter_loss):
+                    raise FloatingPointError(
+                        f"Non-finite validation adapter loss: {val_adapter_loss}"
+                    )
+                metrics["brief"]["Val-Adapter-Loss"] = val_adapter_loss
+                # Checkpoint keys are lexicographically maximised.
+                metrics["brief"]["AdapterTieBreak"] = -val_adapter_loss
             metrics_path = submission_path.replace(".jsonl", "_metrics.json")
             save_json(metrics, metrics_path, save_pretty=True, sort_keys=False)
             metrics_nms = None
@@ -792,7 +808,7 @@ def setup_model(opt):
             opt.aec_variant = variant
             opt.freeze_backbone = True
             opt.enable_adapter = False
-        elif variant in ("P0", "P0-R"):
+        elif variant in ("P0", "P0-R", "P0-AllK"):
             opt.enable_adapter = True
             opt.adapter_variant = variant
             opt.freeze_backbone = True
@@ -811,7 +827,7 @@ def setup_model(opt):
     # During public-P0 inference the checkpoint itself is the immutable
     # EventInterface producer.  Stamp its hash before constructing the model so
     # every emitted EventInterfaceV1 carries the complete provenance tuple.
-    if variant in {"P0", "P0-R"} and getattr(opt, "resume", None):
+    if variant in {"P0", "P0-R", "P0-AllK"} and getattr(opt, "resume", None):
         opt.public_p0_checkpoint_sha256 = sha256_file(opt.resume)
 
     baseline_record = None
@@ -855,7 +871,7 @@ def setup_model(opt):
                 raise ValueError("G0/G0-Con calibration must bind frozen G0-Threshold calibration")
         elif hasattr(opt, "eval_results_dir") and variant in {"G0-Threshold", "G0", "G0-Con", "C1", "C2"}:
             raise ValueError(f"{variant} inference requires --count_calibration")
-        if variant in {"P0", "P0-R"} and calibration_path:
+        if variant in {"P0", "P0-R", "P0-AllK"} and calibration_path:
             raise ValueError("P0 inference must not use count calibration")
 
     from models.flash_vtg_gmr.model import build_model1

@@ -211,12 +211,15 @@ class BaseOptions(object):
         # Part 2 parameters
         parser.add_argument(
             "--variant", type=str, default=None,
-            choices=["G0-Threshold", "G0", "G0-Con", "P0", "P0-R", "C1", "C2"],
+            choices=["G0-Threshold", "G0", "G0-Con", "P0", "P0-R", "P0-AllK", "C1", "C2"],
             help="Locked Part 2 variant name",
         )
         parser.add_argument("--baseline_index", type=str, default=None, help="Baseline index file path")
         parser.add_argument("--enable_adapter", action="store_true", help="Enable P0 event adapter")
-        parser.add_argument("--adapter_variant", type=str, default="P0", choices=["P0", "P0-R"], help="P0 variant")
+        parser.add_argument(
+            "--adapter_variant", type=str, default="P0",
+            choices=["P0", "P0-R", "P0-AllK"], help="P0 adapter variant",
+        )
         parser.add_argument("--enable_aec", action="store_true", help="Enable event cardinality (AEC)")
         parser.add_argument("--aec_variant", type=str, default="C1", choices=["G0", "G0-Con", "C1", "C2"], help="AEC variant")
         parser.add_argument("--init_backbone_ckpt", type=str, default=None, help="Backbone checkpoint to initialize from")
@@ -358,7 +361,7 @@ class BaseOptions(object):
                 raise ValueError("Part 2 requires --strict_data_contract")
             if opt.baseline_index is None:
                 raise ValueError("Part 2 requires --baseline_index")
-            if opt.variant in {"G0-Threshold", "G0", "G0-Con", "P0", "P0-R"} and opt.init_backbone_ckpt is None and opt.resume is None:
+            if opt.variant in {"G0-Threshold", "G0", "G0-Con", "P0", "P0-R", "P0-AllK"} and opt.init_backbone_ckpt is None and opt.resume is None:
                 raise ValueError(f"{opt.variant} requires --init_backbone_ckpt")
             if opt.variant in {"C1", "C2"}:
                 if opt.adapter_ckpt is None and opt.resume is None:

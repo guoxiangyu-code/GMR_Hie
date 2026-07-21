@@ -109,7 +109,7 @@ if [[ -n "${RESULTS_DIR_PATH}" ]]; then
   RESULTS_DIR_DEFAULT="${RESULTS_DIR_PATH}"
 elif [[ "${COMMAND}" == "baseline" || "${COMMAND}" == "baseline-repro-check" ]]; then
   RESULTS_DIR_DEFAULT="artifacts/baselines/${SEED_VALUE}"
-elif [[ "${VARIANT}" == "P0" || "${VARIANT}" == "P0-R" ]]; then
+elif [[ "${VARIANT}" == "P0" || "${VARIANT}" == "P0-R" || "${VARIANT}" == "P0-AllK" ]]; then
   RESULTS_DIR_DEFAULT="artifacts/adapters/${SEED_VALUE}/${VARIANT}"
 else
   RESULTS_DIR_DEFAULT="artifacts/cardinality/${SEED_VALUE}/${VARIANT}"
@@ -245,7 +245,7 @@ case "${COMMAND}" in
     ;;
   infer)
     CKPT_PATH="${CHECKPOINT_PATH:-${RESUME_CKPT:-${RESULTS_DIR}/model_best.ckpt}}"
-    if [[ "${VARIANT}" != "P0" && "${VARIANT}" != "P0-R" && -z "${COUNT_CALIBRATION}" ]]; then
+    if [[ "${VARIANT}" != "P0" && "${VARIANT}" != "P0-R" && "${VARIANT}" != "P0-AllK" && -z "${COUNT_CALIBRATION}" ]]; then
       printf '%s\n' '--count_calibration is required for Part 2 count/threshold inference' >&2
       exit 2
     fi

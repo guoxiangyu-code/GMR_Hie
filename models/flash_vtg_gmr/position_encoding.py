@@ -55,7 +55,15 @@ class PositionEmbeddingSine(nn.Module):
 
         """
         assert mask is not None
-        x_embed = mask.cumsum(1, dtype=torch.float32)  # (bsz, L)
+        # Dataset masks are prefix-valid (111..000).  For such masks the
+        # cumulative positions are exactly (1..L) * mask.  This equivalent
+        # formulation avoids CUDA's nondeterministic cumsum kernel on the
+        # project-compatible PyTorch 2.2 runtime.
+        positions = torch.arange(
+            1, mask.shape[1] + 1, dtype=torch.float32, device=mask.device
+        ).unsqueeze(0)
+        valid_lengths = mask.to(dtype=torch.float32).sum(dim=1, keepdim=True)
+        x_embed = torch.minimum(positions, valid_lengths)  # (bsz, L)
         if self.normalize:
             eps = 1e-6
             x_embed = x_embed / (x_embed[:, -1:] + eps) * self.scale

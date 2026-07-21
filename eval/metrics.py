@@ -309,7 +309,10 @@ def _compute_auroc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     tpr = np.concatenate([[0], tpr[distinct]])
     fpr = np.concatenate([[0], fpr[distinct]])
 
-    return float(np.trapezoid(tpr, fpr))
+    if hasattr(np, "trapezoid"):
+        return float(np.trapezoid(tpr, fpr))
+    # NumPy <1.20 lacks trapezoid while NumPy >=2.4 removed trapz.
+    return float(np.sum((tpr[1:] + tpr[:-1]) * np.diff(fpr) * 0.5))
 
 
 def get_existence_score(pred: Dict[str, Any]) -> Tuple[float, str]:

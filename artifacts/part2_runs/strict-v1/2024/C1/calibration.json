@@ -1,0 +1,17 @@
+{
+  "SetSuccess@0.5": 0.5010752688172043,
+  "T_count": 0.9151030531555276,
+  "baseline_checkpoint_sha256": "c399d387bd8f03f283ed465c16819b0c1ad20572f822d3ba6584007e1a691982",
+  "checkpoint_sha256": "abe7d49a44670368d3ebda672ccf5a6b1ba2cfc7a702b9d05efd08690bea912a",
+  "data_manifest_index_sha256": "1aa2f27640887e1156796208ffaedd412faf0eba83314fcc35e2b815e2a9273f",
+  "feature_manifest_sha256": "8bc26f99c70b37b5c6b51f65e9a00101388ad5bd83cf729671fefef2a293ffbe",
+  "positive_query_mAP_tiebreak": 0.05058823529411765,
+  "raw_threshold_calibration_sha256": null,
+  "schema_version": "hiea2m.count-calibration.v1",
+  "seed": 2024,
+  "split": "val",
+  "tau_mode": 0.01,
+  "validation_count_nll": 0.9414674043655396,
+  "validation_manifest_sha256": "17e9043139b43efcf7c6f46c0832f5796611c7bbcb5d53f9dc0385286201da5f",
+  "variant": "C1"
+}

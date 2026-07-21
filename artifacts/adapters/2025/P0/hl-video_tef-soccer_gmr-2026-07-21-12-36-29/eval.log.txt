@@ -1,0 +1,2 @@
+2026_07_21_12_37_33 [Epoch] 000 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_12_38_16 [Epoch] 001 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}

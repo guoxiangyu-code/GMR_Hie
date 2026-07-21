@@ -20,6 +20,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 class TestCandidateContract(unittest.TestCase):
 
+    def test_sine_positions_match_prefix_cumsum_without_cuda_cumsum(self):
+        from models.flash_vtg_gmr.position_encoding import PositionEmbeddingSine
+        module = PositionEmbeddingSine(num_pos_feats=8, normalize=False)
+        x = torch.zeros(2, 5, 8)
+        mask = torch.tensor([[1, 1, 1, 0, 0], [1, 1, 1, 1, 1]], dtype=torch.bool)
+        actual = module(x, mask)
+        cumulative = mask.cumsum(1, dtype=torch.float32)
+        dim_t = 10000 ** (2 * (torch.arange(8, dtype=torch.float32) // 2) / 8)
+        phase = cumulative[:, :, None] / dim_t
+        expected = torch.stack((phase[:, :, 0::2].sin(), phase[:, :, 1::2].cos()), dim=3).flatten(2)
+        self.assertTrue(torch.equal(actual, expected))
+
+    def test_masked_topk_is_batch_local_and_valid_first(self):
+        from models.flash_vtg_gmr.model import masked_topk_indices
+        scores = torch.tensor([[100.0, 2.0, 1.0], [1.0, 50.0, 3.0]])
+        mask = torch.tensor([[False, True, True], [True, False, True]])
+        indices = masked_topk_indices(scores, mask, 2)
+        self.assertTrue(torch.equal(indices, torch.tensor([[1, 2], [2, 0]])))
+
     def _make_adapter_out(self, B=1, M=10, D=256):
         """Build a mock adapter output dict."""
         event_mask = torch.ones(B, M, dtype=torch.bool)

@@ -1,0 +1,87 @@
+{
+  "status": "INCOMPLETE",
+  "runs": {
+    "2024": {
+      "G0-Threshold": {
+        "evaluation_path": "artifacts/adapters/2024/G0-Threshold/hl_val_submission.jsonl",
+        "diagnostics_path": "artifacts/adapters/2024/G0-Threshold/diagnostics.json"
+      },
+      "P0": {
+        "checkpoint_path": "artifacts/adapters/2024/P0/soccer_gmr_best.ckpt",
+        "evaluation_path": "artifacts/adapters/2024/P0/hl_val_submission.jsonl",
+        "diagnostics_path": "artifacts/adapters/2024/P0/diagnostics.json"
+      }
+    },
+    "2025": {
+      "G0-Threshold": {
+        "evaluation_path": "artifacts/adapters/2025/G0-Threshold/hl_val_submission.jsonl",
+        "diagnostics_path": "artifacts/adapters/2025/G0-Threshold/diagnostics.json"
+      },
+      "P0": {
+        "checkpoint_path": "artifacts/adapters/2025/P0/soccer_gmr_best.ckpt",
+        "evaluation_path": "artifacts/adapters/2025/P0/hl_val_submission.jsonl",
+        "diagnostics_path": "artifacts/adapters/2025/P0/diagnostics.json"
+      }
+    }
+  },
+  "report": {
+    "2024": {
+      "G0-Threshold": {
+        "status": "VERIFIED",
+        "evaluation_path": "artifacts/adapters/2024/G0-Threshold/hl_val_submission.jsonl",
+        "diagnostics_path": "artifacts/adapters/2024/G0-Threshold/diagnostics.json"
+      },
+      "G0": {
+        "status": "FAILED",
+        "reason": "Missing files (ckpt_ok=False, eval_ok=False, diag_ok=False)"
+      },
+      "G0-Con": {
+        "status": "FAILED",
+        "reason": "Missing files (ckpt_ok=False, eval_ok=False, diag_ok=False)"
+      },
+      "P0": {
+        "status": "VERIFIED",
+        "checkpoint_path": "artifacts/adapters/2024/P0/soccer_gmr_best.ckpt",
+        "evaluation_path": "artifacts/adapters/2024/P0/hl_val_submission.jsonl",
+        "diagnostics_path": "artifacts/adapters/2024/P0/diagnostics.json"
+      },
+      "C1": {
+        "status": "FAILED",
+        "reason": "Missing files (ckpt_ok=False, eval_ok=False, diag_ok=False)"
+      },
+      "C2": {
+        "status": "FAILED",
+        "reason": "Missing files (ckpt_ok=False, eval_ok=False, diag_ok=False)"
+      }
+    },
+    "2025": {
+      "G0-Threshold": {
+        "status": "VERIFIED",
+        "evaluation_path": "artifacts/adapters/2025/G0-Threshold/hl_val_submission.jsonl",
+        "diagnostics_path": "artifacts/adapters/2025/G0-Threshold/diagnostics.json"
+      },
+      "G0": {
+        "status": "FAILED",
+        "reason": "Missing files (ckpt_ok=False, eval_ok=False, diag_ok=False)"
+      },
+      "G0-Con": {
+        "status": "FAILED",
+        "reason": "Missing files (ckpt_ok=False, eval_ok=False, diag_ok=False)"
+      },
+      "P0": {
+        "status": "VERIFIED",
+        "checkpoint_path": "artifacts/adapters/2025/P0/soccer_gmr_best.ckpt",
+        "evaluation_path": "artifacts/adapters/2025/P0/hl_val_submission.jsonl",
+        "diagnostics_path": "artifacts/adapters/2025/P0/diagnostics.json"
+      },
+      "C1": {
+        "status": "FAILED",
+        "reason": "Missing files (ckpt_ok=False, eval_ok=False, diag_ok=False)"
+      },
+      "C2": {
+        "status": "FAILED",
+        "reason": "Missing files (ckpt_ok=False, eval_ok=False, diag_ok=False)"
+      }
+    }
+  }
+}

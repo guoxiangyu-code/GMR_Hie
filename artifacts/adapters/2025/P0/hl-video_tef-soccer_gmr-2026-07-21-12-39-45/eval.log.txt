@@ -1,0 +1,21 @@
+2026_07_21_12_49_30 [Epoch] 019 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_12_58_55 [Epoch] 039 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_13_08_24 [Epoch] 059 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_13_17_53 [Epoch] 079 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_13_27_18 [Epoch] 099 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_13_36_50 [Epoch] 119 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_13_46_18 [Epoch] 139 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_13_55_44 [Epoch] 159 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_14_22_58 [Epoch] 179 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0247 loss_quality 0.0293 loss_overall 35.8328 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_14_32_21 [Epoch] 199 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0248 loss_quality 0.0300 loss_overall 35.8335 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_14_41_47 [Epoch] 219 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0248 loss_quality 0.0293 loss_overall 35.8327 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_14_51_17 [Epoch] 239 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0247 loss_quality 0.0284 loss_overall 35.8318 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_00_49 [Epoch] 259 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0249 loss_quality 0.0300 loss_overall 35.8336 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_04_34 [Epoch] 264 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0247 loss_quality 0.0282 loss_overall 35.8316 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_07_09 [Epoch] 269 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0247 loss_quality 0.0285 loss_overall 35.8318 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_09_44 [Epoch] 274 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0248 loss_quality 0.0286 loss_overall 35.8320 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_12_18 [Epoch] 279 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0248 loss_quality 0.0300 loss_overall 35.8335 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_14_52 [Epoch] 284 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0248 loss_quality 0.0300 loss_overall 35.8335 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_17_28 [Epoch] 289 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0247 loss_quality 0.0280 loss_overall 35.8314 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_20_04 [Epoch] 294 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0247 loss_quality 0.0291 loss_overall 35.8324 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_22_40 [Epoch] 299 [Loss] loss_reg 35.1542 loss_cls 0.0141 loss_exist 0.5538 loss_event 0.0250 loss_quality 0.0301 loss_overall 35.8338 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}

@@ -1,38 +1,155 @@
-import os
-import json
+"""Validation-only threshold and count-temperature calibration for Part 2."""
+
+from __future__ import annotations
+
 import argparse
+import json
+import math
+import os
+
 import torch
-from tqdm import tqdm
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
-from training.flash_vtg_gmr.inference import setup_model, start_end_collate, prepare_batch_inputs
-from training.flash_vtg_gmr.dataset import StartEndDataset
-from tests.test_event_set_metrics import compute_event_set_metrics
+from eval.event_set_metrics import compute_event_set_metrics, temporal_iou
+from training.flash_vtg_gmr.contracts import sha256_file
+from training.flash_vtg_gmr.dataset import StartEndDataset, prepare_batch_inputs, start_end_collate
+from training.flash_vtg_gmr.inference import setup_model
 
-def main():
+
+def _positive_map(pairs: list[tuple[list[list[float]], list[list[float]]]]) -> float:
+    """Deterministic positive-query mAP tie-break over tIoU 0.50:0.95."""
+    values = []
+    for predictions, ground_truth in pairs:
+        if not ground_truth:
+            continue
+        threshold_aps = []
+        for threshold in [value / 100.0 for value in range(50, 100, 5)]:
+            matched = set()
+            precision_sum = 0.0
+            true_positives = 0
+            for rank, prediction in enumerate(predictions, start=1):
+                candidates = [
+                    (temporal_iou(prediction, gt), index)
+                    for index, gt in enumerate(ground_truth)
+                    if index not in matched
+                ]
+                best_iou, best_index = max(candidates, default=(0.0, -1))
+                if best_iou >= threshold:
+                    matched.add(best_index)
+                    true_positives += 1
+                    precision_sum += true_positives / rank
+            threshold_aps.append(precision_sum / max(len(ground_truth), 1))
+        values.append(sum(threshold_aps) / len(threshold_aps))
+    return float(sum(values) / len(values)) if values else 0.0
+
+
+def _fit_temperature(logits: torch.Tensor, labels: torch.Tensor) -> tuple[float, float]:
+    """Fit one positive scalar temperature by validation cross entropy."""
+    best = (float("inf"), 1.0)
+    # Log-spaced grid is stable and deterministic; temperature never changes argmax.
+    for index in range(161):
+        log_temperature = math.log(0.05) + index * (math.log(5.0) - math.log(0.05)) / 160
+        temperature = math.exp(log_temperature)
+        nll = float(torch.nn.functional.cross_entropy(logits / temperature, labels).item())
+        best = min(best, (nll, temperature))
+    return best[1], best[0]
+
+
+def _decode(
+    output: dict,
+    meta: dict,
+    variant: str,
+    tau: float,
+    temperature: float,
+) -> list[list[float]]:
+    duration = float(meta.get("D_grid", meta["duration"]))
+    if variant == "G0-Threshold":
+        spans = output["candidate_span"][0]
+        event_scores = torch.sigmoid(output["candidate_logit"][0])
+        mask = output["candidate_mask"][0]
+        rows = [
+            [float(spans[index, 0]) * duration, float(spans[index, 1]) * duration, float(event_scores[index])]
+            for index in torch.where(mask)[0].tolist()
+            if float(event_scores[index]) >= tau
+        ]
+        return sorted(rows, key=lambda row: row[2], reverse=True)
+
+    probabilities = torch.softmax(output["pred_count_logits"][0] / temperature, dim=-1)
+    count_class = int(probabilities.argmax().item())
+    if count_class == 0:
+        return []
+    if variant in {"G0", "G0-Con"}:
+        spans = output["candidate_span"][0]
+        activity = torch.sigmoid(output["candidate_logit"][0])
+        rank_score = activity
+        mask = output["candidate_mask"][0]
+    else:
+        spans = output["event_span"][0]
+        activity = torch.sigmoid(output["event_logit"][0])
+        rank_score = activity * torch.sigmoid(output["quality_logit"][0])
+        mask = output["event_mask"][0]
+    valid = [(index, float(rank_score[index]), float(activity[index])) for index in torch.where(mask)[0].tolist()]
+    valid.sort(key=lambda row: row[1], reverse=True)
+    if count_class in {1, 2, 3}:
+        selected = valid[:count_class]
+    else:
+        selected = [row for row in valid if row[2] >= tau]
+        if len(selected) < 4:
+            selected = valid[: min(4, len(valid))]
+        else:
+            selected = selected[:10]
+    return [
+        [float(spans[index, 0]) * duration, float(spans[index, 1]) * duration, score]
+        for index, score, _ in selected
+    ]
+
+
+def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", required=True, help="Path to checkpoint")
-    parser.add_argument("--data_manifest_index", required=True, help="Data manifest index")
-    parser.add_argument("--split", default="val", help="Split name to calibrate on")
-    parser.add_argument("--output", required=True, help="Output calibration JSON path")
-    parser.add_argument("--device", type=int, default=0, help="GPU device ID")
+    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--data_manifest_index", required=True)
+    parser.add_argument("--feature_manifest")
+    parser.add_argument("--baseline_index")
+    parser.add_argument("--raw_threshold_calibration")
+    parser.add_argument("--split", default="val", choices=["val"])
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--device", type=int, default=0)
+    parser.add_argument("--variant", choices=["G0-Threshold", "G0", "G0-Con", "C1", "C2"])
     args = parser.parse_args()
 
-    # Load checkpoint to extract original options
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     opt = checkpoint["opt"]
-    
-    # Override paths and device
-    opt.device = args.device
-    opt.device = torch.device(f"cuda:{opt.device}" if opt.device >= 0 else "cpu")
+    checkpoint_variant = getattr(opt, "variant", None)
+    variant = args.variant or checkpoint_variant
+    if variant is None:
+        raise ValueError("--variant is required when calibrating a B0 checkpoint")
+    if checkpoint_variant is not None and args.variant is not None and checkpoint_variant != args.variant:
+        raise ValueError(f"Checkpoint variant {checkpoint_variant} != requested {args.variant}")
+    opt.variant = variant
+    opt.device = torch.device(f"cuda:{args.device}" if args.device >= 0 else "cpu")
     opt.resume = args.checkpoint
+    opt.resume_all = False
     opt.data_manifest_index = args.data_manifest_index
-    opt.eval_split_name = args.split
-    
-    # Build dataset config and create dataset
-    dataset_config = dict(
+    if args.feature_manifest:
+        opt.feature_manifest = args.feature_manifest
+    if args.baseline_index:
+        opt.baseline_index = args.baseline_index
+    if variant == "G0-Threshold":
+        opt.init_backbone_ckpt = args.checkpoint
+        # B0 contains the legacy existence head, which Part 2 deliberately does
+        # not construct.  The audited partial-init path above loads all usable
+        # B0 tensors and excludes that head; strict resume is not appropriate.
+        opt.resume = None
+    opt.eval_split_name = "val"
+
+    with open(args.data_manifest_index, "r", encoding="utf-8") as handle:
+        manifest_index = json.load(handle)
+    split_record = manifest_index["data_manifests"]["val"]
+    opt.eval_path = split_record["path"]
+    dataset = StartEndDataset(
         dset_name=opt.dset_name,
-        data_path=opt.eval_path if args.split == "val" else opt.train_path, # will override below
+        data_path=opt.eval_path,
         v_feat_dirs=opt.v_feat_dirs,
         q_feat_dir=opt.t_feat_dir,
         q_feat_type=opt.q_feat_type,
@@ -43,241 +160,120 @@ def main():
         normalize_v=not opt.no_norm_vfeat,
         normalize_t=not opt.no_norm_tfeat,
         clip_len=opt.clip_length,
-        max_windows=opt.max_windows,
+        max_windows=-1,
         span_loss_type=opt.span_loss_type,
         txt_drop_ratio=0,
         dset_domain=opt.dset_domain,
         mr_only=opt.mr_only,
         keep_empty_gt=True,
-        strict_data_contract=getattr(opt, "strict_data_contract", False),
-        require_text_mask=getattr(opt, "require_text_mask", False),
-        text_store_length=getattr(opt, "text_store_length", 77),
-        legacy_text_mask=getattr(opt, "legacy_text_mask", False),
-        legacy_gt_sampling=getattr(opt, "legacy_gt_sampling", False),
+        strict_data_contract=True,
+        require_text_mask=True,
+        text_store_length=opt.text_store_length,
+        legacy_text_mask=False,
+        legacy_gt_sampling=False,
         seed=opt.seed,
+        split="val",
     )
-    
-    # Load canonical manifest paths from data_manifest_index
-    with open(args.data_manifest_index, "r", encoding="utf-8") as f:
-        manifest_index = json.load(f)
-    split_path = manifest_index["data_manifests"][args.split]["path"]
-    dataset_config["data_path"] = split_path
-    
-    val_dataset = StartEndDataset(**dataset_config)
-    val_loader = DataLoader(
-        val_dataset,
+    loader = DataLoader(
+        dataset,
         collate_fn=start_end_collate,
-        batch_size=1, # always 1 for evaluation
+        batch_size=1,
         shuffle=False,
         num_workers=opt.num_workers,
         pin_memory=opt.pin_memory,
     )
-
     model, _, _, _ = setup_model(opt)
     model.eval()
-
-    # Collect raw outputs from the validation set
-    collected_outputs = []
-    collected_metas = []
-    
+    outputs = []
+    metas = []
+    count_logits = []
+    count_labels = []
     with torch.no_grad():
-        for batch in tqdm(val_loader, desc="Running forward pass on validation"):
-            meta = batch[0][0]
+        for batch in tqdm(loader, desc="validation calibration forward"):
             model_inputs, targets = prepare_batch_inputs(batch[1], opt.device)
-            if targets is not None:
-                targets["label"] = batch[0]
-                bsz = int(model_inputs["src_vid"].shape[0])
-                targets["fps"] = torch.full((bsz,), 1 / opt.clip_length, device=opt.device)
-            else:
-                targets = {}
-                
-            outputs = model(**model_inputs, targets=targets)
-            
-            # Save relevant tensors in CPU memory
-            item_out = {}
-            for k in ["candidate_span", "candidate_logit", "candidate_mask", 
-                      "event_span", "event_logit", "quality_logit", "event_mask",
-                      "pred_count_logits", "pred_count_probs"]:
-                if k in outputs and outputs[k] is not None:
-                    item_out[k] = outputs[k].cpu()
-            
-            collected_outputs.append(item_out)
-            collected_metas.append(meta)
+            targets = targets or {}
+            targets["label"] = batch[0]
+            targets["fps"] = torch.full((1,), 1 / opt.clip_length, device=opt.device)
+            count_class = min(len(batch[0][0].get("relevant_windows") or []), 4)
+            targets["count_class"] = torch.tensor([count_class], device=opt.device)
+            raw = model(**model_inputs, targets=targets)
+            outputs.append({
+                key: value.detach().cpu()
+                for key, value in raw.items()
+                if key in {
+                    "candidate_span", "candidate_logit", "candidate_mask",
+                    "event_span", "event_logit", "quality_logit", "event_mask",
+                    "pred_count_logits",
+                }
+            })
+            metas.append(batch[0][0])
+            if "pred_count_logits" in raw:
+                count_logits.append(raw["pred_count_logits"].detach().cpu())
+                count_labels.append(count_class)
 
-    # Helper function to compute SetSuccess for a given set of parameters
-    def evaluate_calibration(param_dict):
-        predictions = []
-        for out, meta in zip(collected_outputs, collected_metas):
-            duration = float(meta["duration"])
-            variant = getattr(opt, "variant", None)
-            
-            # Implement the selection logic with local calibration params
-            res = []
-            if variant == "G0-Threshold":
-                tau_raw = param_dict["tau_raw"]
-                cand_span = out["candidate_span"][0]
-                cand_logit = out["candidate_logit"][0]
-                cand_mask = out["candidate_mask"][0]
-                scores = torch.sigmoid(cand_logit)
-                
-                chosen = []
-                for idx in range(cand_span.shape[0]):
-                    if cand_mask[idx] and scores[idx] >= tau_raw:
-                        s, e = cand_span[idx].tolist()
-                        chosen.append([s * duration, e * duration, float(scores[idx])])
-                chosen.sort(key=lambda x: x[2], reverse=True)
-                res = chosen
-                
-            elif variant in ("G0", "G0-Con"):
-                tau_raw = param_dict["tau_raw"]
-                T_count = param_dict.get("T_count", 1.0)
-                
-                # Apply T_count scaling to logits
-                logits = out["pred_count_logits"][0] / T_count
-                probs = torch.softmax(logits, dim=-1)
-                pred_count = int(probs.argmax().item())
-                
-                if pred_count > 0:
-                    cand_span = out["candidate_span"][0]
-                    cand_logit = out["candidate_logit"][0]
-                    cand_mask = out["candidate_mask"][0]
-                    scores = torch.sigmoid(cand_logit)
-                    valid_indices = torch.where(cand_mask)[0].tolist()
-                    
-                    valid_candidates = [(idx, float(scores[idx])) for idx in valid_indices]
-                    valid_candidates.sort(key=lambda x: x[1], reverse=True)
-                    
-                    if pred_count in (1, 2, 3):
-                        keep_n = min(pred_count, len(valid_candidates))
-                        chosen = valid_candidates[:keep_n]
-                    else:
-                        above_thd = [x for x in valid_candidates if x[1] >= tau_raw]
-                        if len(above_thd) < 4:
-                            chosen = valid_candidates[:min(4, len(valid_candidates))]
-                        else:
-                            chosen = above_thd[:min(10, len(above_thd))]
-                    for idx, score in chosen:
-                        s, e = cand_span[idx].tolist()
-                        res.append([s * duration, e * duration, score])
-                        
-            elif variant in ("C1", "C2"):
-                tau_mode = param_dict["tau_mode"]
-                T_count = param_dict.get("T_count", 1.0)
-                
-                logits = out["pred_count_logits"][0] / T_count
-                probs = torch.softmax(logits, dim=-1)
-                pred_count = int(probs.argmax().item())
-                
-                if pred_count > 0:
-                    event_span = out["event_span"][0]
-                    event_logit = out["event_logit"][0]
-                    quality_logit = out["quality_logit"][0]
-                    event_mask = out["event_mask"][0]
-                    
-                    event_score = torch.sigmoid(event_logit)
-                    qual_score = torch.sigmoid(quality_logit)
-                    mode_score = event_score * qual_score
-                    
-                    valid_indices = torch.where(event_mask)[0].tolist()
-                    valid_modes = [(idx, float(mode_score[idx]), float(event_score[idx])) for idx in valid_indices]
-                    valid_modes.sort(key=lambda x: x[1], reverse=True)
-                    
-                    if pred_count in (1, 2, 3):
-                        keep_n = min(pred_count, len(valid_modes))
-                        chosen = valid_modes[:keep_n]
-                    else:
-                        above_thd = [x for x in valid_modes if x[2] >= tau_mode]
-                        if len(above_thd) < 4:
-                            chosen = valid_modes[:min(4, len(valid_modes))]
-                        else:
-                            chosen = above_thd[:min(10, len(above_thd))]
-                    for idx, score, _ in chosen:
-                        s, e = event_span[idx].tolist()
-                        res.append([s * duration, e * duration, score])
+    temperature, validation_nll = 1.0, None
+    if count_logits:
+        temperature, validation_nll = _fit_temperature(
+            torch.cat(count_logits, dim=0), torch.tensor(count_labels, dtype=torch.long)
+        )
 
-            # predictions format: list of [start, end]
-            pred_windows = [w[:2] for w in res]
-            gt_windows = meta.get("relevant_windows", [])
-            if gt_windows is None:
-                gt_windows = []
-            # Normalize GT to seconds (just in case they are not)
-            predictions.append((pred_windows, gt_windows))
+    raw_calibration_sha = None
+    if variant in {"G0", "G0-Con"}:
+        if not args.raw_threshold_calibration:
+            raise ValueError(f"{variant} requires --raw_threshold_calibration from same-seed G0-Threshold")
+        with open(args.raw_threshold_calibration, "r", encoding="utf-8") as handle:
+            raw_calibration = json.load(handle)
+        if raw_calibration.get("variant") != "G0-Threshold" or int(raw_calibration.get("seed", -1)) != int(opt.seed):
+            raise ValueError("G0-Threshold calibration variant/seed mismatch")
+        if raw_calibration.get("baseline_checkpoint_sha256") != getattr(opt, "baseline_checkpoint_sha256", None):
+            raise ValueError("G0-Threshold calibration B0 hash mismatch")
+        tau_values = [float(raw_calibration["tau_raw"])]
+        raw_calibration_sha = sha256_file(args.raw_threshold_calibration)
+    else:
+        tau_values = [value / 100.0 for value in range(1, 100)]
 
-        metrics = compute_event_set_metrics(predictions, theta=0.5)
-        return metrics["SetSuccess"]
+    best_key = (-1.0, -1.0, -1.0)
+    best_tau = tau_values[0]
+    for tau in tau_values:
+        decoded = [_decode(output, meta, variant, tau, temperature) for output, meta in zip(outputs, metas)]
+        pairs = [
+            ([window[:2] for window in pred], meta.get("relevant_windows") or [])
+            for pred, meta in zip(decoded, metas)
+        ]
+        set_success = float(compute_event_set_metrics(pairs)["SetSuccess"])
+        positive_map = _positive_map(pairs)
+        # Final tie-break prefers the lower threshold for determinism.
+        key = (set_success, positive_map, -tau)
+        if key > best_key:
+            best_key = key
+            best_tau = tau
 
-    # Search parameters
-    best_params = {}
-    variant = getattr(opt, "variant", None)
-    
-    if variant == "G0-Threshold":
-        # Search tau_raw in [0.01, 0.99]
-        best_score = -1.0
-        best_tau = 0.5
-        for tau_int in range(1, 100):
-            tau = tau_int / 100.0
-            score = evaluate_calibration({"tau_raw": tau})
-            if score > best_score:
-                best_score = score
-                best_tau = tau
-        best_params = {"tau_raw": best_tau, "SetSuccess": best_score}
-        print(f"Calibrated G0-Threshold: {best_params}")
+    result = {
+        "schema_version": "hiea2m.count-calibration.v1",
+        "variant": variant,
+        "seed": int(opt.seed),
+        "split": "val",
+        "checkpoint_sha256": sha256_file(args.checkpoint),
+        "baseline_checkpoint_sha256": getattr(opt, "baseline_checkpoint_sha256", None),
+        "feature_manifest_sha256": sha256_file(opt.feature_manifest),
+        "data_manifest_index_sha256": sha256_file(args.data_manifest_index),
+        "validation_manifest_sha256": split_record["sha256"],
+        "raw_threshold_calibration_sha256": raw_calibration_sha,
+        "T_count": temperature,
+        "validation_count_nll": validation_nll,
+        "SetSuccess@0.5": best_key[0],
+        "positive_query_mAP_tiebreak": best_key[1],
+    }
+    if variant in {"G0-Threshold", "G0", "G0-Con"}:
+        result["tau_raw"] = best_tau
+    else:
+        result["tau_mode"] = best_tau
+    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+    with open(args.output, "w", encoding="utf-8") as handle:
+        json.dump(result, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    print(json.dumps(result, indent=2, sort_keys=True))
 
-    elif variant in ("G0", "G0-Con"):
-        # We need tau_raw and T_count.
-        # But wait! "G0-Threshold validation-only single threshold" should be reused for tau_raw.
-        # Let's search over T_count (0.1 to 3.0) and tau_raw (0.01 to 0.99)
-        best_score = -1.0
-        best_tau = 0.5
-        best_T = 1.0
-        for T_int in range(1, 31):
-            T = T_int / 10.0
-            for tau_int in range(1, 100, 5): # coarse search for speed
-                tau = tau_int / 100.0
-                score = evaluate_calibration({"tau_raw": tau, "T_count": T})
-                if score > best_score:
-                    best_score = score
-                    best_tau = tau
-                    best_T = T
-        # Fine tuning around best
-        for tau_int in range(max(1, int(best_tau*100)-5), min(100, int(best_tau*100)+5)):
-            tau = tau_int / 100.0
-            score = evaluate_calibration({"tau_raw": tau, "T_count": best_T})
-            if score > best_score:
-                best_score = score
-                best_tau = tau
-        best_params = {"tau_raw": best_tau, "T_count": best_T, "SetSuccess": best_score}
-        print(f"Calibrated {variant}: {best_params}")
-
-    elif variant in ("C1", "C2"):
-        # We need tau_mode and T_count
-        best_score = -1.0
-        best_tau = 0.5
-        best_T = 1.0
-        for T_int in range(1, 31):
-            T = T_int / 10.0
-            for tau_int in range(1, 100, 5):
-                tau = tau_int / 100.0
-                score = evaluate_calibration({"tau_mode": tau, "T_count": T})
-                if score > best_score:
-                    best_score = score
-                    best_tau = tau
-                    best_T = T
-        # Fine tuning
-        for tau_int in range(max(1, int(best_tau*100)-5), min(100, int(best_tau*100)+5)):
-            tau = tau_int / 100.0
-            score = evaluate_calibration({"tau_mode": tau, "T_count": best_T})
-            if score > best_score:
-                best_score = score
-                best_tau = tau
-        best_params = {"tau_mode": best_tau, "T_count": best_T, "SetSuccess": best_score}
-        print(f"Calibrated {variant}: {best_params}")
-
-    # Write calibration parameters
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    with open(args.output, "w", encoding="utf-8") as f:
-        json.dump(best_params, f, indent=2)
-    print(f"Saved calibration to {args.output}")
 
 if __name__ == "__main__":
     main()

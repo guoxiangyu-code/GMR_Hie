@@ -1,0 +1,17 @@
+{
+  "SetSuccess@0.5": 0.5397849462365591,
+  "T_count": 0.8155864546139192,
+  "baseline_checkpoint_sha256": "73b46fe47c5404ff05aa8537c8b420f70bb31b88c21aefe1729f8a0b9e9758cb",
+  "checkpoint_sha256": "4d67de74e0244201fa9f968879e4349c68e51f2cb868b901d043faf92492d428",
+  "data_manifest_index_sha256": "1aa2f27640887e1156796208ffaedd412faf0eba83314fcc35e2b815e2a9273f",
+  "feature_manifest_sha256": "8bc26f99c70b37b5c6b51f65e9a00101388ad5bd83cf729671fefef2a293ffbe",
+  "positive_query_mAP_tiebreak": 0.0750326797385621,
+  "raw_threshold_calibration_sha256": "61fc39b7ca878c816d9418c7658efc64cbebc9b587adf27d918819c50cfcc50b",
+  "schema_version": "hiea2m.count-calibration.v1",
+  "seed": 2025,
+  "split": "val",
+  "tau_raw": 0.63,
+  "validation_count_nll": 0.9635471701622009,
+  "validation_manifest_sha256": "17e9043139b43efcf7c6f46c0832f5796611c7bbcb5d53f9dc0385286201da5f",
+  "variant": "G0-Con"
+}

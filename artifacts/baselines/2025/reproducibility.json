@@ -1,0 +1,13 @@
+{
+  "canonical_tensor_state_sha256": "0830f4e78400468d07f06904e6a3bae6d972226675296d3af9bef1cbabda817c",
+  "checkpoint_boundary": "epoch",
+  "checkpoint_epoch": 192,
+  "checkpoint_file_sha256": "73b46fe47c5404ff05aa8537c8b420f70bb31b88c21aefe1729f8a0b9e9758cb",
+  "dataset_epoch": 192,
+  "global_step": 4052,
+  "payload_sha256": "866d220171562874a2f8f1b307cd2fdcf006418db379b9e5d4db92607109bce6",
+  "rng_state_sha256": "d53332932ba72be26b1ee552d626e46b5052f169b0c7a34c6868f4f5b6c46775",
+  "schema_version": "hiea2m.reproducibility.v1",
+  "seed": 2025,
+  "variant": "B0"
+}

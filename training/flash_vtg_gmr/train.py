@@ -33,6 +33,78 @@ from training.flash_vtg_gmr.reproducibility import (
     seed_everything,
     seed_worker,
 )
+from training.flash_vtg_gmr.contracts import sha256_file
+
+
+def _selection_metric_names(variant):
+    if variant in {"P0", "P0-R"}:
+        return ["AdapterScore"]
+    if variant in {"G0", "G0-Con", "C1", "C2"}:
+        return ["SetSuccess@0.5", "MR-full-mAP", "Count-Acc-5"]
+    return ["MR-full-mAP"]
+
+
+def _training_command(opt):
+    path = os.path.join(opt.results_dir, "command.txt")
+    if not os.path.isfile(path):
+        return None
+    with open(path, "r", encoding="utf-8") as handle:
+        return handle.read().strip()
+
+
+def _strict_checkpoint_payload(
+    model, optimizer, lr_scheduler, epoch_i, opt, data_generator, iteration,
+    prev_best_key, es_cnt, validation_files=None,
+):
+    validation_files = validation_files or []
+    validation_records = {
+        "predictions": None,
+        "metrics": None,
+    }
+    if len(validation_files) >= 2:
+        validation_records = {
+            "predictions": {
+                "path": validation_files[0],
+                "sha256": sha256_file(validation_files[0]),
+            },
+            "metrics": {
+                "path": validation_files[1],
+                "sha256": sha256_file(validation_files[1]),
+            },
+        }
+    variant = getattr(opt, "variant", None)
+    return {
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "lr_scheduler": lr_scheduler.state_dict(),
+        "epoch": epoch_i,
+        "opt": opt,
+        "seed": int(opt.seed),
+        "variant": variant,
+        "baseline_checkpoint_sha256": getattr(opt, "baseline_checkpoint_sha256", None),
+        "feature_manifest_sha256": getattr(opt, "feature_manifest_sha256", None),
+        "public_p0_checkpoint_sha256": getattr(opt, "public_p0_checkpoint_sha256", None),
+        "event_interface_schema": "EventInterfaceV1" if getattr(opt, "enable_adapter", False) else None,
+        "event_interface_metadata": {
+            "schema": "EventInterfaceV1",
+            "span_source": "greedy_seed_spans",
+            "selection_threshold": 0.5,
+            "max_modes": int(getattr(opt, "event_max_modes", 10)),
+        } if variant in {"P0", "P0-R"} else None,
+        "checkpoint_boundary": "epoch",
+        "selection_split": "val",
+        "selection_metric_names": _selection_metric_names(variant),
+        "selection_key": list(prev_best_key),
+        "validation_artifacts": validation_records,
+        "training_command": _training_command(opt),
+        "reproducibility_state": capture_rng_state(
+            data_generator, dataset_epoch=epoch_i, global_step=iteration
+        ),
+        "training_state": {
+            "prev_best_key": list(prev_best_key),
+            "es_cnt": es_cnt,
+        },
+    }
 
 def set_seed(seed, use_cuda=True):
     seed_everything(seed, use_cuda=use_cuda)
@@ -170,7 +242,11 @@ def train(model, criterion, optimizer, lr_scheduler, train_dataset, val_dataset,
     )
 
     resume_training_state = getattr(opt, "_resume_training_state", None) or {}
-    prev_best_score = float(resume_training_state.get("prev_best_score", 0.0))
+    stored_best_key = resume_training_state.get("prev_best_key")
+    if stored_best_key is not None:
+        prev_best_key = tuple(float(value) for value in stored_best_key)
+    else:
+        prev_best_key = (float(resume_training_state.get("prev_best_score", -1e9)),)
     es_cnt = int(resume_training_state.get("es_cnt", 0))
     if opt.start_epoch is None:
         start_epoch = -1 if opt.eval_untrained else 0
@@ -240,42 +316,37 @@ def train(model, criterion, optimizer, lr_scheduler, train_dataset, val_dataset,
                     )
                 )
 
-            if opt.dset_name in ["hl"]:
-                stop_score = metrics["brief"]["MR-full-mAP"]
+            if getattr(opt, "variant", None) in {"P0", "P0-R"}:
+                stop_key = (float(metrics["brief"]["AdapterScore"]),)
+            elif getattr(opt, "variant", None) in {"G0", "G0-Con", "C1", "C2"}:
+                stop_key = (
+                    float(metrics["brief"]["SetSuccess@0.5"]),
+                    float(metrics["brief"]["MR-full-mAP"]),
+                    float(metrics["brief"]["Count-Acc-5"]),
+                )
+            elif opt.dset_name in ["hl"]:
+                stop_key = (float(metrics["brief"]["MR-full-mAP"]),)
             elif opt.dset_name in ["tacos"]:
-                stop_score = metrics["brief"]["MR-full-R1@0.3"]
+                stop_key = (float(metrics["brief"]["MR-full-R1@0.3"]),)
             else:
-                stop_score = (
+                stop_key = ((
                     metrics["brief"]["MR-full-R1@0.7"]
                     + metrics["brief"]["MR-full-R1@0.5"]
-                ) / 2
+                ) / 2,)
 
-            if stop_score > prev_best_score:
+            if stop_key > prev_best_key:
                 es_cnt = 0
-                prev_best_score = stop_score
-
-                checkpoint = {
-                    "model": model.state_dict(),
-                    "optimizer": optimizer.state_dict(),
-                    "lr_scheduler": lr_scheduler.state_dict(),
-                    "epoch": epoch_i,
-                    "opt": opt,
-                    "checkpoint_boundary": "epoch",
-                    "reproducibility_state": capture_rng_state(
-                        data_generator, dataset_epoch=epoch_i, global_step=iteration
-                    ),
-                    "training_state": {
-                        "prev_best_score": prev_best_score,
-                        "es_cnt": es_cnt,
-                    },
-                }
-                torch.save(checkpoint, opt.ckpt_filepath.replace(".ckpt", "_best.ckpt"))
-
+                prev_best_key = stop_key
                 best_file_paths = [
                     e.replace("latest", "best") for e in latest_file_paths
                 ]
                 for src, tgt in zip(latest_file_paths, best_file_paths):
                     os.renames(src, tgt)
+                checkpoint = _strict_checkpoint_payload(
+                    model, optimizer, lr_scheduler, epoch_i, opt, data_generator,
+                    iteration, prev_best_key, es_cnt, best_file_paths,
+                )
+                torch.save(checkpoint, opt.ckpt_filepath.replace(".ckpt", "_best.ckpt"))
                 logger.info("The checkpoint file has been updated.")
             else:
                 es_cnt += 1
@@ -283,26 +354,15 @@ def train(model, criterion, optimizer, lr_scheduler, train_dataset, val_dataset,
                     with open(opt.train_log_filepath, "a") as f:
                         f.write(f"Early Stop at epoch {epoch_i}")
                     logger.info(
-                        f"\n>>>>> Early stop at epoch {epoch_i}  {prev_best_score}\n"
+                        f"\n>>>>> Early stop at epoch {epoch_i}  {prev_best_key}\n"
                     )
                     break
 
         # save ckpt
-        checkpoint = {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "lr_scheduler": lr_scheduler.state_dict(),
-            "epoch": epoch_i,
-            "opt": opt,
-            "checkpoint_boundary": "epoch",
-            "reproducibility_state": capture_rng_state(
-                data_generator, dataset_epoch=epoch_i, global_step=iteration
-            ),
-            "training_state": {
-                "prev_best_score": prev_best_score,
-                "es_cnt": es_cnt,
-            },
-        }
+        checkpoint = _strict_checkpoint_payload(
+            model, optimizer, lr_scheduler, epoch_i, opt, data_generator,
+            iteration, prev_best_key, es_cnt,
+        )
         torch.save(checkpoint, opt.ckpt_filepath.replace(".ckpt", "_latest.ckpt"))
 
         if opt.debug:
@@ -465,7 +525,7 @@ def start_training():
         txt_drop_ratio=opt.txt_drop_ratio,
         dset_domain=opt.dset_domain,
         mr_only=opt.mr_only,
-        keep_empty_gt=bool(getattr(opt, "use_exist_head", False)),
+        keep_empty_gt=(getattr(opt, "variant", None) is not None or bool(getattr(opt, "use_exist_head", False))),
         strict_data_contract=getattr(opt, "strict_data_contract", False),
         require_text_mask=getattr(opt, "require_text_mask", False),
         text_store_length=getattr(opt, "text_store_length", 77),
@@ -550,7 +610,18 @@ if __name__ == "__main__":
 
     best_ckpt_path, eval_split_name, eval_path, debug, opt = start_training()
 
-    if not debug and eval_path is not None:
+    # Count-based Part 2 variants cannot run their formal inference until the
+    # validation calibration artifact has been fitted.  Their validation
+    # predictions/metrics are already emitted by the epoch evaluator and are
+    # subsequently consumed by finalize_part2_run.sh, which calibrates first
+    # and only then runs inference plus exact replay.
+    needs_count_calibration = getattr(opt, "variant", None) in {
+        "G0",
+        "G0-Con",
+        "C1",
+        "C2",
+    }
+    if not debug and eval_path is not None and not needs_count_calibration:
         input_args = [
             opt.config,
             "--resume",
@@ -568,3 +639,9 @@ if __name__ == "__main__":
         logger.info("Evaluating model at {}".format(best_ckpt_path))
         logger.info("Input args {}".format(sys.argv[1:]))
         start_inference(opt)
+    elif needs_count_calibration:
+        logger.info(
+            "Skipping post-training inference for %s; calibration and formal "
+            "inference are performed by finalize_part2_run.sh",
+            opt.variant,
+        )

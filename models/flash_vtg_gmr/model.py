@@ -38,6 +38,14 @@ def element_wise_list_equal(listA, listB):
             res.append(False)
     return res
 
+
+def masked_topk_indices(scores: torch.Tensor, valid_mask: torch.Tensor, k: int) -> torch.Tensor:
+    """Per-sample top-k indices with every invalid row ranked after valid rows."""
+    if scores.shape != valid_mask.shape or valid_mask.dtype != torch.bool:
+        raise ValueError("scores/valid_mask must have the same shape and a boolean mask")
+    masked_scores = scores.masked_fill(~valid_mask, float("-inf"))
+    return masked_scores.sort(dim=1, descending=True).indices[:, :k]
+
 class ConfidenceScorer(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, num_conv_layers=1, num_mlp_layers=3):
         super(ConfidenceScorer, self).__init__()
@@ -157,6 +165,17 @@ class FlashVTG(nn.Module):
                 seed=getattr(args, "seed", 2024),
             )
 
+    def train(self, mode: bool = True):
+        """Keep frozen B0/P0 modules in eval mode during downstream training."""
+        super().train(mode)
+        if mode and bool(getattr(self.args, "freeze_backbone", False)):
+            for name, module in self.named_children():
+                if name not in {"event_adapter", "aec"}:
+                    module.eval()
+        if mode and bool(getattr(self.args, "freeze_adapter", False)) and hasattr(self, "event_adapter"):
+            self.event_adapter.eval()
+        return self
+
 
     def forward(self, src_txt, src_txt_mask, src_vid, src_vid_mask, vid, qid, targets=None):
         if vid is not None:
@@ -176,6 +195,7 @@ class FlashVTG(nn.Module):
 
         # Project inputs to the same hidden dimension
         src_vid = self.input_vid_proj(src_vid)
+        raw_src_txt = src_txt
         src_txt = self.input_txt_proj(src_txt)
         # Add type embeddings
         src_vid = src_vid + self.token_type_embeddings(torch.full_like(src_vid_mask.long(), 1))
@@ -247,7 +267,7 @@ class FlashVTG(nn.Module):
             output["video_msk"] = video_msk
 
             # Candidate extraction (Part 2 §4)
-            if getattr(self.args, "enable_adapter", False) or getattr(self.args, "enable_aec", False):
+            if getattr(self.args, "enable_adapter", False) or getattr(self.args, "enable_aec", False) or getattr(self.args, "variant", None) == "G0-Threshold":
                 B = video_emb.shape[0]
                 K = 50
                 # Decode spans normalized [0, 1]
@@ -261,21 +281,20 @@ class FlashVTG(nn.Module):
                 spans_norm = spans_sec / dur_sec.unsqueeze(-1)  # (B, total_points, 2)
                 spans_norm = spans_norm.clamp(0.0, 1.0)
 
-                # Find top-K based on out_class
+                # Find top-K based on out_class.  Invalid pyramid positions must
+                # lose before sorting, otherwise padding can displace valid rows.
                 scores = out_class.squeeze(-1)  # (B, total_points)
-                # Sort indices
-                _, topk_idx = scores.sort(dim=1, descending=True)
-                candidate_topk_idx = topk_idx[:, :K]  # (B, K)
+                if pymid_msk:
+                    pymid_msk_cat = torch.cat(pymid_msk, dim=1).bool()
+                else:
+                    pymid_msk_cat = torch.ones_like(scores, dtype=torch.bool)
+                candidate_topk_idx = masked_topk_indices(scores, pymid_msk_cat, K)
 
                 # Gather features, mask, span, logit, point, scale
                 pymid_cat = torch.cat(pymid, dim=1)  # (B, total_points, 256)
                 candidate_feat = torch.gather(pymid_cat, 1, candidate_topk_idx.unsqueeze(-1).expand(-1, -1, 256))
 
-                if pymid_msk:
-                    pymid_msk_cat = torch.cat(pymid_msk, dim=1).bool()  # (B, total_points)
-                    candidate_mask = torch.gather(pymid_msk_cat, 1, candidate_topk_idx)
-                else:
-                    candidate_mask = torch.ones((B, K), dtype=torch.bool, device=video_emb.device)
+                candidate_mask = torch.gather(pymid_msk_cat, 1, candidate_topk_idx)
 
                 candidate_span = torch.gather(spans_norm, 1, candidate_topk_idx.unsqueeze(-1).expand(-1, -1, 2))
                 candidate_logit = torch.gather(scores, 1, candidate_topk_idx)  # (B, K)
@@ -311,7 +330,13 @@ class FlashVTG(nn.Module):
 
                     # Build EventInterfaceV1 and expose it
                     from models.flash_vtg_gmr.event_adapter import p0_inference
-                    iface = p0_inference(adapter_out, query_global)
+                    iface = p0_inference(
+                        adapter_out,
+                        query_global,
+                        b0_sha=getattr(self.args, "baseline_checkpoint_sha256", None),
+                        p0_sha=getattr(self.args, "public_p0_checkpoint_sha256", None),
+                        fm_sha=getattr(self.args, "feature_manifest_sha256", None),
+                    )
                     output["event_interface"] = iface
 
                 if getattr(self.args, "enable_aec", False):
@@ -319,7 +344,7 @@ class FlashVTG(nn.Module):
                     if aec_variant in ("G0", "G0-Con"):
                         # AEC runs on raw candidates
                         aec_out = self.aec(
-                            text_feat=src_txt,
+                            text_feat=raw_src_txt,
                             text_mask=src_txt_mask,
                             set_feat=candidate_feat,
                             set_mask=candidate_mask,
@@ -330,7 +355,7 @@ class FlashVTG(nn.Module):
                         event_feat = adapter_out["event_feat"]
                         event_mask = adapter_out["event_mask"]
                         aec_out = self.aec(
-                            text_feat=src_txt,
+                            text_feat=raw_src_txt,
                             text_mask=src_txt_mask,
                             set_feat=event_feat,
                             set_mask=event_mask,
@@ -358,6 +383,14 @@ class FlashVTG(nn.Module):
                     query_exist = query_exist.squeeze(1) if query_exist.shape[1] == 1 else query_exist.mean(dim=1)
                 exist_inp = torch.cat([query_exist, video_pooled.float()], dim=-1)
                 output["pred_exist_logits"] = self.exist_head(exist_inp).squeeze(-1)
+
+            if self.training == False and targets is not None and "span_labels" in targets:
+                output["point"] = point
+                output["video_emb"] = video_emb
+                output["query_emb"] = query_emb
+                output["pymid_msk"] = pymid_msk
+                output["out_class"] = out_class.clone()
+                output["out_coord"] = out_coord
 
             if self.training == True:
 
@@ -838,11 +871,13 @@ class SetCriterion(nn.Module):
 
         part2_losses = {}
         # 1. P0 Adapter losses: L_event, L_quality, L_span (if P0-R)
-        if getattr(self.args, "enable_adapter", False):
+        if getattr(self.args, "enable_adapter", False) and not getattr(self.args, "freeze_adapter", False):
             from models.flash_vtg_gmr.event_adapter import compute_adapter_losses
             adapter_targets = []
             for meta in targets["label"]:
-                duration = float(meta["duration"])
+                # Candidate/event spans are normalized by D_grid=T*clip_length.
+                # GT must use the same coordinate system (Part 1 temporal contract).
+                duration = float(meta.get("D_grid", meta["duration"]))
                 rel_wins = meta.get("relevant_windows", [])
                 if rel_wins is None:
                     rel_wins = []
@@ -879,7 +914,7 @@ class SetCriterion(nn.Module):
             def _filter_value_by_mask(v):
                 if torch.is_tensor(v):
                     if v.ndim >= 1 and v.shape[0] == m.shape[0]:
-                        return v[m]
+                        return v[m.to(v.device)]
                     return v
                 if isinstance(v, list):
                     return [_filter_value_by_mask(e) for e in v]
@@ -925,8 +960,11 @@ class SetCriterion(nn.Module):
 
             losses = self.loss(new_outputs, outputs_for_loss)
         else:
-            # all-negative batch: skip MR losses; keep existence loss only
-            losses = {k: outputs["pred_exist_logits"].sum() * 0.0 for k in self.weight_dict.keys() if k != "loss_exist"}
+            # All-negative batch: legacy MR losses are skipped.  Part 2 does not
+            # construct the legacy existence head, so use an available model
+            # tensor only as a device/dtype-preserving zero anchor.
+            anchor = outputs.get("pred_exist_logits", outputs.get("candidate_logit", outputs["saliency_scores"]))
+            losses = {k: anchor.sum() * 0.0 for k in self.weight_dict.keys() if k != "loss_exist"}
 
         # Compute auxiliary losses (saliency/labels/exist)
         for loss in self.losses:
@@ -1070,7 +1108,13 @@ def build_model1(args):
         "loss_sal": args.lw_sal,
     }
 
-    if getattr(args, "enable_adapter", False):
+    # Formal Part 2 freezes B0 and optimizes only its preregistered new-module
+    # objective.  Legacy localization terms are neither weighted nor allowed to
+    # influence checkpoint loss accounting.
+    if getattr(args, "variant", None) is not None:
+        weight_dict = {}
+
+    if getattr(args, "enable_adapter", False) and not getattr(args, "freeze_adapter", False):
         weight_dict["loss_event"] = 1.0
         weight_dict["loss_quality"] = 1.0
         if getattr(args, "adapter_variant", "P0") == "P0-R":

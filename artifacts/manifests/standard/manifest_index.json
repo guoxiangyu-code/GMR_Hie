@@ -1,0 +1,69 @@
+{
+  "artifact_type": "canonical-manifest-index",
+  "content_sha256": "b59890a50863cced6faa7e92b170bbceccd423a07a59750ca57d25f3e02a29e7",
+  "data_manifests": {
+    "test": {
+      "path": "/home/guoxiangyu/HieA2G_GMR/GMR_FlashVTGBaseline/generalized-moment-retrieval/artifacts/data/standard/test.jsonl",
+      "row_count": 1036,
+      "sha256": "cd8a35a9b0b222f68aa2fe6ec1b0efa28ee9152497c9a6cc9747b2acae86ed31"
+    },
+    "train": {
+      "path": "/home/guoxiangyu/HieA2G_GMR/GMR_FlashVTGBaseline/generalized-moment-retrieval/artifacts/data/standard/train.jsonl",
+      "row_count": 4138,
+      "sha256": "ac66120bbe6efd0e9876d40ea999b4044b1a3f7b4e5c7b140a67688ed43f993b"
+    },
+    "val": {
+      "path": "/home/guoxiangyu/HieA2G_GMR/GMR_FlashVTGBaseline/generalized-moment-retrieval/artifacts/data/standard/val.jsonl",
+      "row_count": 465,
+      "sha256": "17e9043139b43efcf7c6f46c0832f5796611c7bbcb5d53f9dc0385286201da5f"
+    }
+  },
+  "dataset_setting": "standard",
+  "feature_manifest": {
+    "content_sha256": "44e2ef1c3aa20b01e76f7e9c5f371bf317b0ad403c945e16ffcf91335b583e3b",
+    "path": "/home/guoxiangyu/HieA2G_GMR/GMR_FlashVTGBaseline/generalized-moment-retrieval/artifacts/features/f-lighthouse/feature_manifest.json",
+    "sha256": "8bc26f99c70b37b5c6b51f65e9a00101388ad5bd83cf729671fefef2a293ffbe"
+  },
+  "identity_audit": {
+    "path": "/home/guoxiangyu/HieA2G_GMR/GMR_FlashVTGBaseline/generalized-moment-retrieval/artifacts/manifests/standard/identity_audit.json",
+    "sha256": "d716739cf4931ef7494351221fb3d87259a826ce10086c4a0e78af51ba7b3eff"
+  },
+  "phrase_targets": {
+    "test_diagnostic": {
+      "path": "/home/guoxiangyu/HieA2G_GMR/GMR_FlashVTGBaseline/generalized-moment-retrieval/artifacts/diagnostics/phrase_targets/test.jsonl",
+      "row_count": 1036,
+      "sha256": "02a857aea8263e3f548e103a19c286c4aeddd73acbaf93df9c77d9fecc369e77"
+    },
+    "train": {
+      "path": "/home/guoxiangyu/HieA2G_GMR/GMR_FlashVTGBaseline/generalized-moment-retrieval/artifacts/phrase_targets/standard/train.jsonl",
+      "row_count": 4138,
+      "sha256": "cbf90dffef4fcac05f98de359406e93d9474b0c3a85cd4901be8fe1b2d8266ff"
+    },
+    "val": {
+      "path": "/home/guoxiangyu/HieA2G_GMR/GMR_FlashVTGBaseline/generalized-moment-retrieval/artifacts/phrase_targets/standard/val.jsonl",
+      "row_count": 465,
+      "sha256": "5fa8a9e8196487cb928c0a814af1e6998f6af514b30c99103ff529081955bc09"
+    }
+  },
+  "schema_version": "hiea2m.part1.v1",
+  "tokenizer": {
+    "bos_token_id": 49406,
+    "class": "CLIPTokenizer",
+    "context_length": 77,
+    "eos_token_id": 49407,
+    "files": {
+      "merges_file": {
+        "path": "/home/guoxiangyu/.cache/huggingface/hub/models--openai--clip-vit-base-patch32/blobs/bbfec752c9a675946c6dce106def6f35c882dcc2",
+        "sha256": "f526393189112391ce6f9795d4695f704121ce452c3aad1f5335cc41337eba85"
+      },
+      "vocab_file": {
+        "path": "/home/guoxiangyu/.cache/huggingface/hub/models--openai--clip-vit-base-patch32/blobs/182766ce89b439768edadda342519f33802f5364",
+        "sha256": "5047b556ce86ccaf6aa22b3ffccfc52d391ea4accdab9c2f2407da5b742d4363"
+      }
+    },
+    "model_length": 40,
+    "name": "openai/clip-vit-base-patch32",
+    "openai_padding_fill_value": 0,
+    "snapshot_revision": "blobs"
+  }
+}

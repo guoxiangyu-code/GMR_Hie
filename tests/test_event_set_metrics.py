@@ -118,6 +118,15 @@ def compute_event_set_metrics(
     }
 
 
+# Exercise the production implementation; the local reference functions above
+# document the toy-case oracle only.
+from eval.event_set_metrics import (
+    compute_event_set_metrics,
+    maximum_cardinality_matching as max_bipartite_matching,
+    temporal_iou as tiou,
+)
+
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 class TestEventSetMetrics(unittest.TestCase):

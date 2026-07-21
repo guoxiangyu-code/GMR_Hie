@@ -1,0 +1,82 @@
+{
+  "runs": {
+    "2024": {
+      "baseline_checkpoint_sha256": "c399d387bd8f03f283ed465c16819b0c1ad20572f822d3ba6584007e1a691982",
+      "checkpoint": {
+        "path": "artifacts/part2_runs/strict-v1/2024/P0/model_public.ckpt",
+        "sha256": "ccc37a1c2c4a9517bc79d1be5f6d9fe644020ac4d8f3a7a6cd4bf98b29d486b4",
+        "size_bytes": 54729530
+      },
+      "event_interface_schema": "EventInterfaceV1",
+      "feature_manifest_sha256": "8bc26f99c70b37b5c6b51f65e9a00101388ad5bd83cf729671fefef2a293ffbe",
+      "metrics": {
+        "path": "artifacts/part2_runs/strict-v1/2024/P0/test_metrics.json",
+        "sha256": "876048d76d8d9ddced8a4d937d8bf3a229be2fd5cf8a8eb6fbfd4ddef258ae05",
+        "size_bytes": 5948
+      },
+      "prediction_replay": {
+        "path": "artifacts/part2_runs/strict-v1/2024/P0/prediction_replay.json",
+        "sha256": "945efb39bcfaba8a74cb4a2516878bbd7a13ced260b16661c9ce98a4e5fbe7eb",
+        "size_bytes": 316
+      },
+      "predictions": {
+        "path": "artifacts/part2_runs/strict-v1/2024/P0/hl_test_submission.jsonl",
+        "sha256": "f0f5854ee222331a7c7eff502094bea887afceb2dce7debcdba65cd79e76cb32",
+        "size_bytes": 2847670
+      },
+      "run_id": "strict-v1-2024-P0",
+      "seed": 2024,
+      "selection_threshold": 0.5,
+      "validation_metrics": {
+        "path": "artifacts/part2_runs/strict-v1/2024/P0/best_hl_val_preds_metrics.json",
+        "sha256": "5d6934559094206cea96a81363e10ee5350376f84a189f282be2a6d9f4e0608a",
+        "size_bytes": 6644
+      },
+      "validation_predictions": {
+        "path": "artifacts/part2_runs/strict-v1/2024/P0/best_hl_val_preds.jsonl",
+        "sha256": "80824dd89132412f5c6cb41eab47f8b779e56f99b62e8593f4989699d30bf6fe",
+        "size_bytes": 1279387
+      }
+    },
+    "2025": {
+      "baseline_checkpoint_sha256": "73b46fe47c5404ff05aa8537c8b420f70bb31b88c21aefe1729f8a0b9e9758cb",
+      "checkpoint": {
+        "path": "artifacts/part2_runs/strict-v1/2025/P0/model_public.ckpt",
+        "sha256": "0aa96b2f9b6e431db7457e05c4f08299049658e53000ba1e41981645c8e21ba7",
+        "size_bytes": 54729530
+      },
+      "event_interface_schema": "EventInterfaceV1",
+      "feature_manifest_sha256": "8bc26f99c70b37b5c6b51f65e9a00101388ad5bd83cf729671fefef2a293ffbe",
+      "metrics": {
+        "path": "artifacts/part2_runs/strict-v1/2025/P0/test_metrics.json",
+        "sha256": "fa9a2e487625cb860a112f63a80e622629fed652d14050b5738a7a45839dd8dc",
+        "size_bytes": 5949
+      },
+      "prediction_replay": {
+        "path": "artifacts/part2_runs/strict-v1/2025/P0/prediction_replay.json",
+        "sha256": "92ef173e0fee9a194673bfaf78dd705060b5e1b9811abb22c2ac0f1cabc71d71",
+        "size_bytes": 316
+      },
+      "predictions": {
+        "path": "artifacts/part2_runs/strict-v1/2025/P0/hl_test_submission.jsonl",
+        "sha256": "7bcd350d875f5c7f5147c4d74c85cf613c490eb5d49ecf96f1b71f4d6522b04e",
+        "size_bytes": 2845140
+      },
+      "run_id": "strict-v1-2025-P0",
+      "seed": 2025,
+      "selection_threshold": 0.5,
+      "validation_metrics": {
+        "path": "artifacts/part2_runs/strict-v1/2025/P0/best_hl_val_preds_metrics.json",
+        "sha256": "207d336b2c4009ea1d98aa2ce6fd8579604ccf556284b54246626ba1a61e48bd",
+        "size_bytes": 6644
+      },
+      "validation_predictions": {
+        "path": "artifacts/part2_runs/strict-v1/2025/P0/best_hl_val_preds.jsonl",
+        "sha256": "96df7bfb8e7a0d6340b708de06b62278f81eb2ca477d5d76baf5642a4c6fcf1a",
+        "size_bytes": 1279258
+      }
+    }
+  },
+  "schema_version": "hiea2m.public-adapter-index.v1",
+  "updated_at": "2026-07-21T09:10:17.205979+00:00"
+}

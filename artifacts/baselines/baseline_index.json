@@ -1,0 +1,390 @@
+{
+  "created_at": "2026-07-21T02:51:28.433547+00:00",
+  "data_manifest_index": {
+    "path": "artifacts/manifests/standard/manifest_index.json",
+    "sha256": "1aa2f27640887e1156796208ffaedd412faf0eba83314fcc35e2b815e2a9273f",
+    "size_bytes": 3266
+  },
+  "feature_manifest": {
+    "path": "artifacts/features/f-lighthouse/feature_manifest.json",
+    "sha256": "8bc26f99c70b37b5c6b51f65e9a00101388ad5bd83cf729671fefef2a293ffbe",
+    "size_bytes": 6633886
+  },
+  "payload_sha256": "49975b338858ad75cdada6369266637aa0b0d493d5398aeee6e244d79ff0c12e",
+  "runs": {
+    "2024": {
+      "artifact_manifest": {
+        "path": "artifacts/baselines/2024/artifact_manifest.json",
+        "sha256": "b586a79ea79ce7dd8daaf5373a69404e4265bf91266e4672ed49460a94d076a5",
+        "size_bytes": 4650
+      },
+      "canonical_tensor_state_sha256": "717826081353594511d19a86d2b187493c0ea107119ccdc7777fa295cb6fa8b2",
+      "checkpoint": {
+        "path": "artifacts/baselines/2024/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/model_best.ckpt",
+        "sha256": "c399d387bd8f03f283ed465c16819b0c1ad20572f822d3ba6584007e1a691982",
+        "size_bytes": 126359392
+      },
+      "metrics": {
+        "path": "artifacts/baselines/2024/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/flash_vtg_gmr_test_results_nms.json",
+        "sha256": "24c4614741b2d711d2e7a199e8403d7a3591208ae405e281b67a6a4064d66fa0",
+        "size_bytes": 5434
+      },
+      "predictions_legacy_nms": {
+        "path": "artifacts/baselines/2024/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/hl_test_submission_nms_thd_0.7.jsonl",
+        "sha256": "44315aede99631498a3fe6b0c7110b6e220b6b2227022793a00aaf4a9273c723",
+        "size_bytes": 1706564
+      },
+      "predictions_raw": {
+        "path": "artifacts/baselines/2024/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/hl_test_submission.jsonl",
+        "sha256": "e18e4f6a68693b8f895cb91f99a5bccad11d162dd22f8b8eae8471d802473eb2",
+        "size_bytes": 1272710
+      },
+      "reproducibility": {
+        "path": "artifacts/baselines/2024/reproducibility.json",
+        "sha256": "7781d5ace0dbab4d528cce49d8c0b86d83af1b5eba14d9482b20e093d7477bd3",
+        "size_bytes": 572
+      },
+      "run_dir": "artifacts/baselines/2024/hl-video_tef-soccer_gmr-2026-07-21-02-08-57",
+      "seed": 2024,
+      "test_metrics_brief": {
+        "AUROC": 75.57,
+        "Acc@0.4": 64.09,
+        "Acc@0.6": 68.82,
+        "G-mIoU@1": 36.71,
+        "G-mIoU@3": 30.72,
+        "G-mIoU@5": 28.59,
+        "Multi-G-mIoU@1": 12.87,
+        "Multi-G-mIoU@3": 15.21,
+        "Multi-G-mIoU@5": 9.67,
+        "Null-FPR@0.40": 46.95,
+        "Null-FPR@0.60": 13.21,
+        "Rej-F1@0.4": 58.39,
+        "Rej-F1@0.6": 72.56,
+        "Single-G-mIoU@1": 25.71,
+        "Single-G-mIoU@3": 8.57,
+        "Single-G-mIoU@5": 5.14,
+        "mAP": 25.27,
+        "mIoU+@1": 0.0,
+        "mIoU+@3": 14.32,
+        "mIoU+@5": 14.44,
+        "mIoU@1": 33.41,
+        "mIoU@3": 29.9,
+        "mIoU@5": 29.83,
+        "mR+@1": 0.0,
+        "mR+@3": 9.77,
+        "mR+@5": 18.16,
+        "mR@1": 15.19,
+        "mR@3": 27.7,
+        "mR@5": 35.23
+      },
+      "variant": "B0"
+    },
+    "2025": {
+      "artifact_manifest": {
+        "path": "artifacts/baselines/2025/artifact_manifest.json",
+        "sha256": "b5b1ce8e834ad2639603b39546689dd6aa22ddd69e8d2a8f597dc1223c06d548",
+        "size_bytes": 4651
+      },
+      "canonical_tensor_state_sha256": "0830f4e78400468d07f06904e6a3bae6d972226675296d3af9bef1cbabda817c",
+      "checkpoint": {
+        "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/model_best.ckpt",
+        "sha256": "73b46fe47c5404ff05aa8537c8b420f70bb31b88c21aefe1729f8a0b9e9758cb",
+        "size_bytes": 126359392
+      },
+      "metrics": {
+        "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/flash_vtg_gmr_test_results_nms.json",
+        "sha256": "853de75be93ebc7f16f97636176f886e87d95be83136dad86ce5ead13358a616",
+        "size_bytes": 5436
+      },
+      "predictions_legacy_nms": {
+        "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/hl_test_submission_nms_thd_0.7.jsonl",
+        "sha256": "dcb5dc0403a93efdcd1c6ce0aac957b817a2ad0e8d4b9bc0b14cd6964fc43e0c",
+        "size_bytes": 1720294
+      },
+      "predictions_raw": {
+        "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/hl_test_submission.jsonl",
+        "sha256": "428d87180b19eb8dca37ee32e10077797ca3b9cc861ee071723ebc97bb4ccf03",
+        "size_bytes": 1274315
+      },
+      "reproducibility": {
+        "path": "artifacts/baselines/2025/reproducibility.json",
+        "sha256": "fc157daf622dcfcb1c368577c5f7b6bf46b8cb05d8be4bc90fdb3b3a8bfd8a6b",
+        "size_bytes": 572
+      },
+      "run_dir": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57",
+      "seed": 2025,
+      "test_metrics_brief": {
+        "AUROC": 76.57,
+        "Acc@0.4": 63.13,
+        "Acc@0.6": 68.92,
+        "G-mIoU@1": 32.69,
+        "G-mIoU@3": 26.2,
+        "G-mIoU@5": 23.86,
+        "Multi-G-mIoU@1": 15.96,
+        "Multi-G-mIoU@3": 17.34,
+        "Multi-G-mIoU@5": 10.86,
+        "Null-FPR@0.40": 57.52,
+        "Null-FPR@0.60": 16.87,
+        "Rej-F1@0.4": 52.25,
+        "Rej-F1@0.6": 71.75,
+        "Single-G-mIoU@1": 27.13,
+        "Single-G-mIoU@3": 9.04,
+        "Single-G-mIoU@5": 5.43,
+        "mAP": 24.77,
+        "mIoU+@1": 0.0,
+        "mIoU+@3": 13.08,
+        "mIoU+@5": 12.74,
+        "mIoU@1": 34.15,
+        "mIoU@3": 30.27,
+        "mIoU@5": 30.1,
+        "mR+@1": 0.0,
+        "mR+@3": 8.48,
+        "mR+@5": 15.71,
+        "mR@1": 14.89,
+        "mR@3": 27.22,
+        "mR@5": 35.47
+      },
+      "variant": "B0"
+    }
+  },
+  "schema_version": "hiea2m.baseline-index.v1",
+  "seeds": [
+    2024,
+    2025
+  ],
+  "test_metrics_aggregate": {
+    "AUROC": {
+      "mean": 76.07,
+      "std": 0.707107,
+      "values": [
+        75.57,
+        76.57
+      ]
+    },
+    "Acc@0.4": {
+      "mean": 63.61,
+      "std": 0.678823,
+      "values": [
+        64.09,
+        63.13
+      ]
+    },
+    "Acc@0.6": {
+      "mean": 68.87,
+      "std": 0.070711,
+      "values": [
+        68.82,
+        68.92
+      ]
+    },
+    "G-mIoU@1": {
+      "mean": 34.7,
+      "std": 2.842569,
+      "values": [
+        36.71,
+        32.69
+      ]
+    },
+    "G-mIoU@3": {
+      "mean": 28.46,
+      "std": 3.196123,
+      "values": [
+        30.72,
+        26.2
+      ]
+    },
+    "G-mIoU@5": {
+      "mean": 26.225,
+      "std": 3.344615,
+      "values": [
+        28.59,
+        23.86
+      ]
+    },
+    "Multi-G-mIoU@1": {
+      "mean": 14.415,
+      "std": 2.18496,
+      "values": [
+        12.87,
+        15.96
+      ]
+    },
+    "Multi-G-mIoU@3": {
+      "mean": 16.275,
+      "std": 1.506137,
+      "values": [
+        15.21,
+        17.34
+      ]
+    },
+    "Multi-G-mIoU@5": {
+      "mean": 10.265,
+      "std": 0.841457,
+      "values": [
+        9.67,
+        10.86
+      ]
+    },
+    "Null-FPR@0.40": {
+      "mean": 52.235,
+      "std": 7.474119,
+      "values": [
+        46.95,
+        57.52
+      ]
+    },
+    "Null-FPR@0.60": {
+      "mean": 15.04,
+      "std": 2.588011,
+      "values": [
+        13.21,
+        16.87
+      ]
+    },
+    "Rej-F1@0.4": {
+      "mean": 55.32,
+      "std": 4.341636,
+      "values": [
+        58.39,
+        52.25
+      ]
+    },
+    "Rej-F1@0.6": {
+      "mean": 72.155,
+      "std": 0.572756,
+      "values": [
+        72.56,
+        71.75
+      ]
+    },
+    "Single-G-mIoU@1": {
+      "mean": 26.42,
+      "std": 1.004092,
+      "values": [
+        25.71,
+        27.13
+      ]
+    },
+    "Single-G-mIoU@3": {
+      "mean": 8.805,
+      "std": 0.33234,
+      "values": [
+        8.57,
+        9.04
+      ]
+    },
+    "Single-G-mIoU@5": {
+      "mean": 5.285,
+      "std": 0.205061,
+      "values": [
+        5.14,
+        5.43
+      ]
+    },
+    "mAP": {
+      "mean": 25.02,
+      "std": 0.353553,
+      "values": [
+        25.27,
+        24.77
+      ]
+    },
+    "mIoU+@1": {
+      "mean": 0.0,
+      "std": 0.0,
+      "values": [
+        0.0,
+        0.0
+      ]
+    },
+    "mIoU+@3": {
+      "mean": 13.7,
+      "std": 0.876812,
+      "values": [
+        14.32,
+        13.08
+      ]
+    },
+    "mIoU+@5": {
+      "mean": 13.59,
+      "std": 1.202082,
+      "values": [
+        14.44,
+        12.74
+      ]
+    },
+    "mIoU@1": {
+      "mean": 33.78,
+      "std": 0.523259,
+      "values": [
+        33.41,
+        34.15
+      ]
+    },
+    "mIoU@3": {
+      "mean": 30.085,
+      "std": 0.26163,
+      "values": [
+        29.9,
+        30.27
+      ]
+    },
+    "mIoU@5": {
+      "mean": 29.965,
+      "std": 0.190919,
+      "values": [
+        29.83,
+        30.1
+      ]
+    },
+    "mR+@1": {
+      "mean": 0.0,
+      "std": 0.0,
+      "values": [
+        0.0,
+        0.0
+      ]
+    },
+    "mR+@3": {
+      "mean": 9.125,
+      "std": 0.912168,
+      "values": [
+        9.77,
+        8.48
+      ]
+    },
+    "mR+@5": {
+      "mean": 16.935,
+      "std": 1.732412,
+      "values": [
+        18.16,
+        15.71
+      ]
+    },
+    "mR@1": {
+      "mean": 15.04,
+      "std": 0.212132,
+      "values": [
+        15.19,
+        14.89
+      ]
+    },
+    "mR@3": {
+      "mean": 27.46,
+      "std": 0.339411,
+      "values": [
+        27.7,
+        27.22
+      ]
+    },
+    "mR@5": {
+      "mean": 35.35,
+      "std": 0.169706,
+      "values": [
+        35.23,
+        35.47
+      ]
+    }
+  },
+  "variant": "B0"
+}

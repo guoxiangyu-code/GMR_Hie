@@ -523,17 +523,27 @@ Total: 70 tests, 0 failures
 9fbc029  Part2 Step2: Implement model candidate extraction, loss calculation, parameter freezing, automatic configuration from variant, calibration script, finalizer, and diagnostics. Total 70 tests pass.
 ```
 
-## Step 3 – Training and Evaluating the 12 Part 2 Run Records (TODO)
+## Step 3 – Training and Evaluating the 12 Part 2 Run Records (IN PROGRESS)
 
 Next action is to execute the training, calibration, and inference commands for the 12 required runs (2 seeds × 6 variants) using `run_hiea2m.sh`, then run `finalize_part2.py` to verify completion.
 
 Required runs list (each for seeds 2024 and 2025):
-1. **G0-Threshold** (Threshold calibration on raw proposals)
+1. **G0-Threshold** (Threshold calibration on raw proposals) -> DONE
 2. **G0** (AGC-Direct on raw proposals)
 3. **G0-Con** (AGC-Direct + contrastive)
-4. **P0** (Proposal-to-event adapter training)
+4. **P0** (Proposal-to-event adapter training) -> IN PROGRESS (resumed training in background tasks)
 5. **C1** (AEC-CE on event modes)
 6. **C2** (AEC-CE + contrastive on event modes)
+
+### Update: 2026-07-21 14:32 Asia/Shanghai (P0 Resumed & Debugged)
+
+- **P0 Training**: Resumed from Epoch 177 (Seed 2024, `task-777` on GPU 0) and Epoch 172 (Seed 2025, `task-780` on GPU 1) using `--resume_all` and batch size 256.
+- **Fixed Issues**:
+  1. Corrected validation loss computation by ensuring `criterion` is evaluated during `eval_epoch`.
+  2. Fixed `prev_best_score` initialization to `-1e9` for variant runs to correctly save best checkpoints.
+  3. Resolved device mismatch `RuntimeError: indices should be either on cpu or on the same device as the indexed tensor` in SetCriterion filtering by mapping the indexing mask to the tensor's device.
+  4. Automatically populated loss computation keys (`point`, `video_emb`, etc.) in model eval mode when validation labels are present.
+- **Current Status**: Both training runs successfully validated at Epoch 180, successfully saved `model_best.ckpt`, and are training normally towards Epoch 400.
 
 ## Resume command (verify tests still pass after context clear)
 
@@ -542,5 +552,115 @@ cd /home/guoxiangyu/HieA2G_GMR/GMR_FlashVTGBaseline/generalized-moment-retrieval
 python -m unittest tests.test_part1_contracts tests.test_event_set_metrics tests.test_candidate_interface tests.test_event_matching -v 2>&1 | tail -10
 ```
 
-Expected: 70 tests, OK.
+Expected at that historical checkpoint: 70 tests, OK.
 
+### Update: 2026-07-21 16:34 Asia/Shanghai (Strict Part 2 Audit Repairs)
+
+The earlier epoch-180/400 P0 directories are preserved but superseded: they were
+created before the strict coordinate, loss, calibration, checkpoint, and replay
+contracts below were repaired, so they must not be registered as formal Part 2
+runs.
+
+Engineering repairs completed:
+
+1. Candidate top-K is batch-local and padding-safe; spans and GT use `D_grid`.
+2. C1/C2 freeze the complete same-seed public P0 and optimize only AEC losses;
+   validation cannot mutate the contrastive queue.
+3. The single empty-set rule, count-class selection, validation-only calibration,
+   G0 raw-threshold binding, and exact test prediction replay are enforced.
+4. Checkpoint/feature/data/P0 hashes are checked at load, registration, public
+   adapter publication, and finalization. Test inference never evaluates labels.
+5. Production event-set diagnostics and strict completion/index/report tools no
+   longer import test helpers or infer completion from directory existence.
+6. Part 2 defaults are now `bsz=256`, `epochs=15`, `lr_drop=10`, and
+   `early_stop=5`. `scripts/run_part2_dual_gpu.sh` maps seed 2024 to GPU 0 and
+   seed 2025 to GPU 1 without overwriting old runs.
+
+Verification:
+
+- Full unit/contract suite: **81 tests, 0 failures**.
+- Compatible runtime: `flashvtg` (PyTorch 2.2.2 + CUDA 12.1); both RTX 3090s
+  are visible outside the managed sandbox.
+- Dual-GPU deterministic smoke: both seeds completed one P0 optimizer update,
+  full 465-query validation, metric calculation, and checkpoint save at
+  `bsz=256`.
+- C1 end-to-end smoke: full 1036-query test inference, diagnostics, and exact
+  selection replay all passed; replay mismatches = 0.
+- G0-Threshold end-to-end smoke: indexed B0 compatibility path, full test
+  inference, resolved config, and exact replay all passed.
+
+Locked research gate discovered before further expensive training:
+
+```text
+P0-selection validation Raw-Proposal-Oracle-FullCoverage@0.5 = 0.922222
+P0-selection validation Oracle-Mode-FullCoverage@0.5         = 0.266667
+allowed coverage loss                                        = 0.050000
+observed coverage loss                                       = 0.655555
+```
+
+For P0-selection, event spans are exactly the frozen greedy seed spans, so this
+coverage gap is independent of Adapter training. The code must not silently
+change the preregistered seed rule to make the gate pass. Formal 12-run execution
+is therefore still **not complete**, and Part 3 handoff remains **NOT_READY**
+unless the research plan is explicitly amended (for example, promoting P0-R or
+changing the seed-selection contract under a new variant).
+
+Current replay command:
+
+```bash
+python -m unittest discover -s tests -q
+# Expected: Ran 81 tests, OK
+```
+
+Formal `strict-v1` P0 was launched at 2026-07-21 16:39 Asia/Shanghai in the
+background: seed 2024 uses GPU 0 and seed 2025 uses GPU 1, both with
+`bsz=256`, deterministic CUDA, and 15-epoch/validation-only selection. At the
+last non-continuous check both were healthy in epoch 3. Logs are
+`/tmp/hiea2m-strict-v1-{2024,2025}-P0.log`; no further polling is required.
+
+### Update: 2026-07-21 17:53 Asia/Shanghai (Part 2 Required Runs Complete)
+
+The strict Part 2 execution is finished. All 12 required records for seeds
+2024/2025 and variants `G0-Threshold`, `G0`, `G0-Con`, `P0`, `C1`, and `C2`
+are registered in `artifacts/cardinality/cardinality_index.json`. Every test
+prediction has 1036 queries and passed exact selection replay with zero
+mismatches.
+
+One execution-order bug was found while completing C1: the training entrypoint
+attempted count inference before the validation-only count calibration existed.
+The completed checkpoint was valid, but the post-training command returned
+non-zero. `training/flash_vtg_gmr/train.py` now skips that premature inference
+for `G0/G0-Con/C1/C2`; `scripts/finalize_part2_run.sh` remains the single path
+that performs calibration, formal test inference, diagnostics, replay, and
+registration in the required order. C2 verified the corrected path on both
+GPUs and exited normally.
+
+Verification and final artifacts:
+
+- Full unit/contract suite: **81 tests, 0 failures**.
+- Cross-seed statistics: `artifacts/cardinality/aggregate_metrics.json`.
+- Required per-seed metrics, preregistered comparisons, P0 gates, and failure
+  diagnosis: `artifacts/cardinality/part2_report.md`.
+- Disk/hash finalizer: `artifacts/cardinality/part2_completion.json`.
+- Finalizer result: `status=COMPLETE`, `unmet_requirements=[]`,
+  `research_outcome=MIXED`, `part3_handoff=NOT_READY`.
+
+Main test means (mean ± sample std across seeds):
+
+| Variant | Count-Acc-5 | SetSuccess@0.5 | mAP |
+|---|---:|---:|---:|
+| G0-Threshold | 0.477317 ± 0.000683 | 0.477317 ± 0.000683 | 0.425 ± 0.064 |
+| G0 | 0.681467 ± 0.002730 | 0.558880 ± 0.002730 | 7.010 ± 0.594 |
+| G0-Con | 0.682915 ± 0.000683 | 0.560328 ± 0.000683 | 6.980 ± 0.636 |
+| P0 | 0.474903 ± 0.000000 | 0.474903 ± 0.000000 | 0.000 ± 0.000 |
+| C1 | 0.683398 ± 0.001365 | 0.545367 ± 0.023206 | 5.240 ± 1.768 |
+| C2 | 0.682432 ± 0.001365 | 0.544402 ± 0.023206 | 5.270 ± 1.810 |
+
+The required experiments are complete even though the handoff is blocked. Both
+public P0 runs fail the preregistered validation gates: seed 2024 has mAP drop
+25.79 and oracle-coverage drop 0.655556; seed 2025 has mAP drop 25.43 and
+oracle-coverage drop 0.588889. In addition, C1/C2 have zero multi-query
+`Count-Acc-5` and zero `Selected-FullCoverage@0.5` for both seeds. Therefore
+Part 3 must not consume the current public P0. Any attempt to continue requires
+an explicit research-plan amendment and a new registered adapter variant; the
+locked P0/C1/C2 records must not be overwritten or retuned on test results.

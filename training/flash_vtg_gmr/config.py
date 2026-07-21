@@ -85,7 +85,6 @@ class BaseOptions(object):
                             help="if --resume_all, load optimizer/scheduler/epoch as well")
         parser.add_argument("--start_epoch", type=int, default=None,
                             help="if None, will be set automatically when using --resume_all")
-        parser.add_argument("--resume_adapter",type=str, default=None, help="checkpoint path to resume adapter")
 
         # Data config
         parser.add_argument("--max_q_l", type=int, default=-1)
@@ -210,7 +209,11 @@ class BaseOptions(object):
         parser.add_argument("--pred_score_thd_for_cls", type=float, default=0.5,
                             help="Score threshold used to classify a query-video pair as positive in GMR metrics.")
         # Part 2 parameters
-        parser.add_argument("--variant", type=str, default=None, help="Part 2 variant name")
+        parser.add_argument(
+            "--variant", type=str, default=None,
+            choices=["G0-Threshold", "G0", "G0-Con", "P0", "P0-R", "C1", "C2"],
+            help="Locked Part 2 variant name",
+        )
         parser.add_argument("--baseline_index", type=str, default=None, help="Baseline index file path")
         parser.add_argument("--enable_adapter", action="store_true", help="Enable P0 event adapter")
         parser.add_argument("--adapter_variant", type=str, default="P0", choices=["P0", "P0-R"], help="P0 variant")
@@ -256,11 +259,17 @@ class BaseOptions(object):
         if isinstance(self, TestOptions):
             # Preserve CLI overrides before loading saved opt.json.
             _cli_overrides = {
+                "device": getattr(opt, "device", None),
                 "v_feat_dirs": getattr(opt, "v_feat_dirs", None),
                 "t_feat_dir": getattr(opt, "t_feat_dir", None),
                 "v_feat_dim": getattr(opt, "v_feat_dim", None),
                 "t_feat_dim": getattr(opt, "t_feat_dim", None),
+                "feature_manifest": getattr(opt, "feature_manifest", None),
+                "data_manifest_index": getattr(opt, "data_manifest_index", None),
+                "baseline_index": getattr(opt, "baseline_index", None),
+                "count_calibration": getattr(opt, "count_calibration", None),
             }
+            requested_variant = getattr(opt, "variant", None)
 
             # modify model_dir to absolute path
             # opt.model_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results", opt.model_dir)
@@ -275,9 +284,21 @@ class BaseOptions(object):
                                "max_pred_l", "min_pred_l",
                                "resume", "resume_all", "no_sort_results"]:
                     setattr(opt, arg, saved_options[arg])
+            saved_variant = getattr(opt, "variant", None)
+            # G0-Threshold is the one calibration-only Part 2 variant: it
+            # intentionally reuses the indexed B0 checkpoint and therefore has
+            # no same-variant training opt.json of its own.
+            is_threshold_from_b0 = requested_variant == "G0-Threshold" and saved_variant is None
+            if requested_variant is not None and requested_variant != saved_variant and not is_threshold_from_b0:
+                raise ValueError(
+                    f"Inference variant override is forbidden: checkpoint={saved_variant}, CLI={requested_variant}"
+                )
+            if is_threshold_from_b0:
+                opt.variant = requested_variant
             # opt.no_core_driver = True
             if opt.eval_results_dir is not None:
                 opt.results_dir = opt.eval_results_dir
+                mkdirp(opt.results_dir)
 
             # Re-apply CLI overrides (if provided)
             for k, v in _cli_overrides.items():
@@ -287,9 +308,17 @@ class BaseOptions(object):
             if opt.exp_id is None:
                 raise ValueError("--exp_id is required for at a training option!")
 
-            ctx_str = opt.ctx_mode + "_sub" if any(["sub_ctx" in p for p in opt.v_feat_dirs]) else opt.ctx_mode
-            opt.results_dir = os.path.join(opt.results_root,
-                                           "-".join([opt.dset_name, ctx_str, opt.exp_id, time.strftime("%Y-%m-%d-%H-%M-%S")]))
+            if getattr(opt, "resume", None) is not None:
+                opt.results_dir = os.path.dirname(os.path.abspath(opt.resume))
+            elif getattr(opt, "variant", None) is not None:
+                # Part 2 run directories are explicit artifact identities supplied
+                # by the orchestration script; do not hide them under a timestamp.
+                opt.results_dir = os.path.abspath(opt.results_root)
+            else:
+                ctx_str = opt.ctx_mode + "_sub" if any(["sub_ctx" in p for p in opt.v_feat_dirs]) else opt.ctx_mode
+                opt.results_dir = os.path.join(opt.results_root,
+                                               "-".join([opt.dset_name, ctx_str, opt.exp_id, time.strftime("%Y-%m-%d-%H-%M-%S")]))
+
                                                     #  str(opt.enc_layers) + str(opt.dec_layers) + str(opt.t2v_layers) + str(opt.moment_layers) + str(opt.dummy_layers) + str(opt.sent_layers),
                                                     #  'ndum_' + str(opt.num_dummies), 'nprom_' + str(opt.num_prompts) + '_' + str(opt.total_prompts)]))
 
@@ -322,6 +351,20 @@ class BaseOptions(object):
             if opt.data_manifest_index is None:
                 raise ValueError("Strict B0 requires --data_manifest_index")
             self._validate_data_manifest(opt)
+        if getattr(opt, "variant", None) is not None:
+            if opt.max_windows != -1:
+                raise ValueError("Part 2 requires --max_windows -1")
+            if not opt.strict_data_contract:
+                raise ValueError("Part 2 requires --strict_data_contract")
+            if opt.baseline_index is None:
+                raise ValueError("Part 2 requires --baseline_index")
+            if opt.variant in {"G0-Threshold", "G0", "G0-Con", "P0", "P0-R"} and opt.init_backbone_ckpt is None and opt.resume is None:
+                raise ValueError(f"{opt.variant} requires --init_backbone_ckpt")
+            if opt.variant in {"C1", "C2"}:
+                if opt.adapter_ckpt is None and opt.resume is None:
+                    raise ValueError(f"{opt.variant} requires --adapter_ckpt")
+                if not opt.freeze_adapter:
+                    raise ValueError(f"{opt.variant} requires --freeze_adapter")
         if getattr(opt, "repro_check", False):
             opt.num_workers = 0
 

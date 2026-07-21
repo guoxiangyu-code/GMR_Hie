@@ -1,0 +1,113 @@
+{
+  "artifacts": {
+    "checkpoint": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/model_best.ckpt",
+      "sha256": "73b46fe47c5404ff05aa8537c8b420f70bb31b88c21aefe1729f8a0b9e9758cb",
+      "size_bytes": 126359392
+    },
+    "code_archive": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/code.zip",
+      "sha256": "588f044e723ac711b2e1d78d5933f0cfaa59a2d9055b598210ce1aad312c025b",
+      "size_bytes": 223650
+    },
+    "command": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/command.txt",
+      "sha256": "a47d243f73294bd1c2f412ad3a45ad87c1c9ddbf56c23c9f698cc604fb788522",
+      "size_bytes": 1564
+    },
+    "environment": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/environment.txt",
+      "sha256": "2080ec394695439144cdd98b691553aa27352f22340dc357fe06cb059e18f9d7",
+      "size_bytes": 195
+    },
+    "metrics": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/flash_vtg_gmr_test_results_nms.json",
+      "sha256": "853de75be93ebc7f16f97636176f886e87d95be83136dad86ce5ead13358a616",
+      "size_bytes": 5436
+    },
+    "metrics_raw": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/flash_vtg_gmr_test_results_raw.json",
+      "sha256": "5cbbe87451514614aaf1e911c1e0d160dc2e2ff8db8bdae56bcddad057d7b8b6",
+      "size_bytes": 5436
+    },
+    "opt": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/opt.json",
+      "sha256": "300fa183f9e198d26d6aa5a53d2fb91c7871a791e0e8fb31f9d3f5fea2b54bb3",
+      "size_bytes": 3132
+    },
+    "predictions_legacy_nms": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/hl_test_submission_nms_thd_0.7.jsonl",
+      "sha256": "dcb5dc0403a93efdcd1c6ce0aac957b817a2ad0e8d4b9bc0b14cd6964fc43e0c",
+      "size_bytes": 1720294
+    },
+    "predictions_raw": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/hl_test_submission.jsonl",
+      "sha256": "428d87180b19eb8dca37ee32e10077797ca3b9cc861ee071723ebc97bb4ccf03",
+      "size_bytes": 1274315
+    },
+    "reproducibility": {
+      "path": "artifacts/baselines/2025/reproducibility.json",
+      "sha256": "fc157daf622dcfcb1c368577c5f7b6bf46b8cb05d8be4bc90fdb3b3a8bfd8a6b",
+      "size_bytes": 572
+    },
+    "val_metrics_legacy_nms": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/best_hl_val_preds_nms_thd_0.7_metrics.json",
+      "sha256": "5e545c36848206586385f87f729b041568ed1e08a91fa8ffb44e432ee8bba3bd",
+      "size_bytes": 1096
+    },
+    "val_metrics_raw": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/best_hl_val_preds_metrics.json",
+      "sha256": "328f28eb3de57690e55c054bf5ec0081ac4d5a345945248a372d6ad691bbeb5c",
+      "size_bytes": 1098
+    },
+    "val_predictions_legacy_nms": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/best_hl_val_preds_nms_thd_0.7.jsonl",
+      "sha256": "23f6bea85a94ad588c7c00ac2cde26f1134695ece53633afa05b276347ae890a",
+      "size_bytes": 766934
+    },
+    "val_predictions_raw": {
+      "path": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57/best_hl_val_preds.jsonl",
+      "sha256": "523dca05ffd82fc7ba97aee98dcfbe1c22a5c237a008137d57ef346fa9315822",
+      "size_bytes": 573127
+    }
+  },
+  "canonical_tensor_state_sha256": "0830f4e78400468d07f06904e6a3bae6d972226675296d3af9bef1cbabda817c",
+  "checkpoint_epoch": 192,
+  "created_at": "2026-07-21T02:51:28.289945+00:00",
+  "payload_sha256": "55bda8d5825c79883d6c11371b0cb7eb951610e24e5e0cc686810c5c720ef965",
+  "run_dir": "artifacts/baselines/2025/hl-video_tef-soccer_gmr-2026-07-21-02-08-57",
+  "schema_version": "hiea2m.baseline-artifact.v1",
+  "seed": 2025,
+  "test_metrics_brief": {
+    "AUROC": 76.57,
+    "Acc@0.4": 63.13,
+    "Acc@0.6": 68.92,
+    "G-mIoU@1": 32.69,
+    "G-mIoU@3": 26.2,
+    "G-mIoU@5": 23.86,
+    "Multi-G-mIoU@1": 15.96,
+    "Multi-G-mIoU@3": 17.34,
+    "Multi-G-mIoU@5": 10.86,
+    "Null-FPR@0.40": 57.52,
+    "Null-FPR@0.60": 16.87,
+    "Rej-F1@0.4": 52.25,
+    "Rej-F1@0.6": 71.75,
+    "Single-G-mIoU@1": 27.13,
+    "Single-G-mIoU@3": 9.04,
+    "Single-G-mIoU@5": 5.43,
+    "mAP": 24.77,
+    "mIoU+@1": 0.0,
+    "mIoU+@3": 13.08,
+    "mIoU+@5": 12.74,
+    "mIoU@1": 34.15,
+    "mIoU@3": 30.27,
+    "mIoU@5": 30.1,
+    "mR+@1": 0.0,
+    "mR+@3": 8.48,
+    "mR+@5": 15.71,
+    "mR@1": 14.89,
+    "mR@3": 27.22,
+    "mR@5": 35.47
+  },
+  "variant": "B0"
+}

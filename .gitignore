@@ -29,3 +29,15 @@ Thumbs.db
 # Evaluation outputs
 *_result*.json
 *.out.json
+
+# Exclude model weights, checkpoints, and archives
+*.ckpt
+*.pt
+*.pkl
+*.bin
+*.h5
+*.msgpack
+*.tar.gz
+
+# Exclude pre-extracted feature datasets
+artifacts/features/

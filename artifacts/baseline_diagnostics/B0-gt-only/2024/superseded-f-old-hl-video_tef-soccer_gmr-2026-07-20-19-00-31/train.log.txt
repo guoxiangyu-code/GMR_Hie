@@ -1,0 +1,4 @@
+2026_07_20_19_01_38 [Epoch] 001 [Loss] loss_reg 0.4930 loss_cls 0.0547 loss_exist 0.6094 weighted_loss_overall 1.3760
+2026_07_20_19_02_51 [Epoch] 002 [Loss] loss_reg 0.4368 loss_cls 0.0333 loss_exist 0.5694 weighted_loss_overall 1.1725
+2026_07_20_19_04_03 [Epoch] 003 [Loss] loss_reg 0.4247 loss_cls 0.0321 loss_exist 0.5667 weighted_loss_overall 1.1518
+2026_07_20_19_05_15 [Epoch] 004 [Loss] loss_reg 0.4141 loss_cls 0.0316 loss_exist 0.5649 weighted_loss_overall 1.1372

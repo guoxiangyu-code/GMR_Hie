@@ -1,0 +1,32 @@
+{
+  "SetSuccess@0.5": 0.45376344086021503,
+  "DuplicateRate@0.5": 0.0,
+  "Selected-FullCoverage@0.5": 0.0,
+  "Oracle-Mode-FullCoverage@0.5": 0.26666666666666666,
+  "Raw-Proposal-Oracle-FullCoverage@0.5": 0.9222222222222223,
+  "Count-Acc-5": 0.45376344086021503,
+  "Count-Acc-Exact": 0.45376344086021503,
+  "MAE": 0.7827956989247312,
+  "OverPredictionRate": 0.0,
+  "UnderPredictionRate": 0.546236559139785,
+  "AUROC": 0.5019607843137255,
+  "Rej-F1": 0.0078125,
+  "Null-FPR": 0.0,
+  "grouped_metrics": {
+    "null_gt": {
+      "count": 210,
+      "count_acc": 1.0,
+      "SetSuccess": 1.0
+    },
+    "single_gt": {
+      "count": 165,
+      "count_acc": 0.006060606060606061,
+      "SetSuccess": 0.006060606060606061
+    },
+    "multi_gt": {
+      "count": 90,
+      "count_acc": 0.0,
+      "SetSuccess": 0.0
+    }
+  }
+}

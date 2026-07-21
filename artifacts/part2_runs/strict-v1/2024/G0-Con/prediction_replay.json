@@ -1,0 +1,9 @@
+{
+  "calibration_sha256": "dff12d09f3fe12bd5247f96bba862542f64c3d6a19ca65f39f7b2047a025fb61",
+  "ground_truth_sha256": "cd8a35a9b0b222f68aa2fe6ec1b0efa28ee9152497c9a6cc9747b2acae86ed31",
+  "predictions_sha256": "d9424acb6866f993ffc2439110b280560977e4eae8c0916f78e551071853c1b7",
+  "query_count": 1036,
+  "selection_replay_mismatches": 0,
+  "status": "PASS",
+  "variant": "G0-Con"
+}

@@ -1,0 +1,20 @@
+2026_07_21_12_48_59 [Epoch] 019 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_12_58_07 [Epoch] 039 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_13_07_17 [Epoch] 059 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_13_16_25 [Epoch] 079 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_13_25_32 [Epoch] 099 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_13_34_43 [Epoch] 119 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_13_44_01 [Epoch] 139 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_13_53_03 [Epoch] 159 [Loss] loss_overall 0.0000 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_14_21_04 [Epoch] 179 [Loss] loss_reg 35.2251 loss_cls 0.0142 loss_exist 0.5781 loss_event 0.0251 loss_quality 0.0282 loss_overall 35.9277 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_14_30_20 [Epoch] 199 [Loss] loss_reg 35.2251 loss_cls 0.0142 loss_exist 0.5781 loss_event 0.0253 loss_quality 0.0275 loss_overall 35.9271 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_14_39_36 [Epoch] 219 [Loss] loss_reg 35.2251 loss_cls 0.0142 loss_exist 0.5781 loss_event 0.0255 loss_quality 0.0288 loss_overall 35.9286 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_14_48_56 [Epoch] 239 [Loss] loss_reg 35.2251 loss_cls 0.0142 loss_exist 0.5781 loss_event 0.0253 loss_quality 0.0280 loss_overall 35.9277 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_14_58_11 [Epoch] 259 [Loss] loss_reg 35.2251 loss_cls 0.0142 loss_exist 0.5781 loss_event 0.0254 loss_quality 0.0290 loss_overall 35.9288 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_04_01 [Epoch] 269 [Loss] loss_reg 35.2251 loss_cls 0.0142 loss_exist 0.5781 loss_event 0.0255 loss_quality 0.0298 loss_overall 35.9297 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_06_34 [Epoch] 274 [Loss] loss_reg 35.2251 loss_cls 0.0142 loss_exist 0.5781 loss_event 0.0253 loss_quality 0.0284 loss_overall 35.9280 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_09_07 [Epoch] 279 [Loss] loss_reg 35.2251 loss_cls 0.0142 loss_exist 0.5781 loss_event 0.0253 loss_quality 0.0280 loss_overall 35.9276 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_11_38 [Epoch] 284 [Loss] loss_reg 35.2251 loss_cls 0.0142 loss_exist 0.5781 loss_event 0.0256 loss_quality 0.0307 loss_overall 35.9306 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_14_12 [Epoch] 289 [Loss] loss_reg 35.2251 loss_cls 0.0142 loss_exist 0.5781 loss_event 0.0252 loss_quality 0.0283 loss_overall 35.9279 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_16_45 [Epoch] 294 [Loss] loss_reg 35.2251 loss_cls 0.0142 loss_exist 0.5781 loss_event 0.0254 loss_quality 0.0290 loss_overall 35.9288 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}
+2026_07_21_15_19_20 [Epoch] 299 [Loss] loss_reg 35.2251 loss_cls 0.0142 loss_exist 0.5781 loss_event 0.0252 loss_quality 0.0276 loss_overall 35.9271 [Metrics] {"brief": {"MR-full-mAP": 0.0, "MR-full-R1@0.5": 0.0, "MR-full-R1@0.7": 0.0}}

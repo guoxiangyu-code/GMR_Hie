@@ -216,7 +216,8 @@ class CountContrastiveHead(nn.Module):
         valid = (all_labels >= 0)
         if valid.sum() < 2:
             # Not enough queue entries yet – return 0
-            self._enqueue(proj, count_class)
+            if self.training:
+                self._enqueue(proj, count_class)
             return g.sum() * 0.0
 
         keys = all_keys[valid]         # (N_k, proj_dim)
@@ -242,8 +243,10 @@ class CountContrastiveHead(nn.Module):
         if n_terms > 0:
             loss = loss / n_terms
 
-        # Enqueue current batch
-        self._enqueue(proj, count_class)
+        # Validation/test must be observational: never leak examples into the
+        # queue used by subsequent training batches.
+        if self.training:
+            self._enqueue(proj, count_class)
         return loss
 
 

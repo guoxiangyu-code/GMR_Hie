@@ -1,5 +1,6 @@
 import pprint
 import sys
+import json
 from tqdm import tqdm, trange
 import numpy as np
 import os
@@ -23,6 +24,7 @@ from eval.metrics import compute_gmr_cls
 from eval.normalization import load_ts_window_cfg, normalize_ground_truth
 from models.flash_vtg_gmr.utils.basic_utils import save_jsonl, save_json
 from training.flash_vtg_gmr.reproducibility import configure_runtime, restore_rng_state
+from training.flash_vtg_gmr.contracts import sha256_file
 
 import nncore
 from nncore.ops import temporal_iou
@@ -67,6 +69,8 @@ def clamp_prediction_to_decode_duration(prediction):
             continue
         clamped.append([start, end, *window[2:]])
     prediction["pred_relevant_windows"] = clamped
+    if prediction.get("variant") == "G0-Threshold":
+        prediction["selected_count"] = len(clamped)
     return prediction
 
 
@@ -318,7 +322,7 @@ def select_predictions_for_inference(outputs, opt, meta):
     # Returns: list of [start, end, score] in seconds
     
     variant = getattr(opt, "variant", None)
-    duration = float(meta["duration"])
+    duration = float(meta.get("D_grid", meta["duration"]))
     
     if variant is None:
         return outputs["_out"]["boundary"].tolist()
@@ -327,15 +331,13 @@ def select_predictions_for_inference(outputs, opt, meta):
     tau_mode = 0.5
     tau_raw = 0.5
     
+    calib = {}
     if getattr(opt, "count_calibration", None) is not None:
-        try:
-            import json
-            with open(opt.count_calibration, "r") as f:
-                calib = json.load(f)
-            tau_mode = float(calib.get("tau_mode", 0.5))
-            tau_raw = float(calib.get("tau_raw", 0.5))
-        except Exception as e:
-            logger.warning(f"Failed to load count calibration: {e}")
+        import json
+        with open(opt.count_calibration, "r", encoding="utf-8") as f:
+            calib = json.load(f)
+        tau_mode = float(calib.get("tau_mode", 0.5))
+        tau_raw = float(calib.get("tau_raw", 0.5))
 
     if variant == "G0-Threshold":
         cand_span = outputs["candidate_span"][0]  # (K, 2)
@@ -352,7 +354,8 @@ def select_predictions_for_inference(outputs, opt, meta):
         return selected
 
     elif variant in ("G0", "G0-Con"):
-        count_probs = outputs["pred_count_probs"][0]  # (5,)
+        temperature = float(calib.get("T_count", 1.0))
+        count_probs = torch.softmax(outputs["pred_count_logits"][0] / temperature, dim=-1)
         pred_count = int(count_probs.argmax().item())
         
         if pred_count == 0:
@@ -407,7 +410,8 @@ def select_predictions_for_inference(outputs, opt, meta):
         return res
 
     elif variant in ("C1", "C2"):
-        count_probs = outputs["pred_count_probs"][0]  # (5,)
+        temperature = float(calib.get("T_count", 1.0))
+        count_probs = torch.softmax(outputs["pred_count_logits"][0] / temperature, dim=-1)
         pred_count = int(count_probs.argmax().item())
         
         if pred_count == 0:
@@ -532,32 +536,52 @@ def compute_mr_results(
                     vid=meta["vid"],
                     pred_relevant_windows=cur_ranked_preds,
                     _decode_duration=decode_duration,
+                    variant=getattr(opt, "variant", None),
                 )
-                if "pred_count_probs" in outputs:
-                    pred_count = int(outputs["pred_count_probs"][0].argmax().item())
+                if "pred_count_logits" in outputs:
+                    temperature = 1.0
+                    if getattr(opt, "count_calibration", None):
+                        with open(opt.count_calibration, "r", encoding="utf-8") as handle:
+                            temperature = float(json.load(handle).get("T_count", 1.0))
+                    count_probs = torch.softmax(outputs["pred_count_logits"][0] / temperature, dim=-1)
+                    pred_count = int(count_probs.argmax().item())
                     cur_query_pred["pred_count"] = pred_count
+                    cur_query_pred["pred_count_probs"] = [float(x) for x in count_probs.tolist()]
+                    cur_query_pred["pred_exist_score"] = float(1.0 - count_probs[0])
                 
                 # Save oracle modes and raw proposals for diagnostics
                 if "event_span" in outputs:
                     event_span = outputs["event_span"][0]
                     event_mask = outputs["event_mask"][0]
-                    duration = float(meta["duration"])
+                    event_logits = outputs["event_logit"][0]
+                    quality_logits = outputs["quality_logit"][0]
+                    duration = float(meta.get("D_grid", meta["duration"]))
                     modes = []
                     for m_i in range(event_span.shape[0]):
                         if event_mask[m_i]:
                             s, e = event_span[m_i].tolist()
-                            modes.append([float(f"{s * duration:.3f}"), float(f"{e * duration:.3f}")])
+                            modes.append([
+                                float(f"{s * duration:.3f}"),
+                                float(f"{e * duration:.3f}"),
+                                float(event_logits[m_i]),
+                                float(quality_logits[m_i]),
+                            ])
                     cur_query_pred["oracle_mode_windows"] = modes
 
                 if "candidate_span" in outputs:
                     cand_span = outputs["candidate_span"][0]
                     cand_mask = outputs["candidate_mask"][0]
-                    duration = float(meta["duration"])
+                    cand_logits = outputs["candidate_logit"][0]
+                    duration = float(meta.get("D_grid", meta["duration"]))
                     cands = []
                     for c_i in range(cand_span.shape[0]):
                         if cand_mask[c_i]:
                             s, e = cand_span[c_i].tolist()
-                            cands.append([float(f"{s * duration:.3f}"), float(f"{e * duration:.3f}")])
+                            cands.append([
+                                float(f"{s * duration:.3f}"),
+                                float(f"{e * duration:.3f}"),
+                                float(cand_logits[c_i]),
+                            ])
                     cur_query_pred["raw_proposal_windows"] = cands
                 mr_res.append(cur_query_pred)
             else:
@@ -581,9 +605,18 @@ def compute_mr_results(
                     cur_query_pred["pred_exist_score"] = float(f"{float(pred_exist_scores[idx]):.3f}")
                 mr_res.append(cur_query_pred)
 
-        loss_dict = {k: v for k, v in outputs.items() if 'loss' in k}
-        losses = sum(loss_dict.values())
-        loss_dict["loss_overall"] = float(losses)  # for logging only
+        if criterion is not None:
+            loss_dict = criterion(batch, outputs, targets)
+            loss_dict = {k: v for k, v in loss_dict.items() if "loss" in k}
+            weight_dict = criterion.weight_dict
+            losses = sum(
+                loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict
+            )
+            loss_dict["loss_overall"] = float(losses)
+        else:
+            loss_dict = {k: v for k, v in outputs.items() if 'loss' in k}
+            losses = sum(loss_dict.values())
+            loss_dict["loss_overall"] = float(losses)
         for k, v in loss_dict.items():
             loss_meters[k].update(
                 float(v)
@@ -704,9 +737,43 @@ def eval_epoch(
                 new_submission.append(s)
             submission = new_submission
 
-        metrics, metrics_nms, latest_file_paths = eval_epoch_post_processing(
-            submission, opt, eval_dataset.data, save_submission_filename
-        )
+        if getattr(opt, "variant", None) is not None:
+            submission_path = os.path.join(opt.results_dir, save_submission_filename)
+            save_jsonl(submission, submission_path)
+            if opt.eval_split_name != "val":
+                return None, None, eval_loss_meters, [submission_path]
+            from eval.eval_main import evaluate_gmr
+            metrics = evaluate_gmr(
+                submission,
+                eval_dataset.data,
+                map_num_workers=max(1, int(opt.num_workers)),
+                verbose=False,
+            )
+            metrics["brief"]["MR-full-mAP"] = metrics["brief"]["mAP"]
+            from eval.event_set_metrics import compute_submission_diagnostics
+            diagnostics = compute_submission_diagnostics(submission, eval_dataset.data)
+            metrics["diagnostics"] = diagnostics
+            metrics["brief"].update({
+                "SetSuccess@0.5": diagnostics["SetSuccess@0.5"],
+                "Count-Acc-5": diagnostics["Count-Acc-5"],
+                "Selected-FullCoverage@0.5": diagnostics["Selected-FullCoverage@0.5"],
+                "DuplicateRate@0.5": diagnostics["DuplicateRate@0.5"],
+            })
+            coverage = float(diagnostics["Selected-FullCoverage@0.5"])
+            duplicate_complement = 1.0 - float(diagnostics["DuplicateRate@0.5"])
+            if np.isfinite(coverage) and coverage + duplicate_complement > 0:
+                adapter_score = 2.0 * coverage * duplicate_complement / (coverage + duplicate_complement)
+            else:
+                adapter_score = 0.0
+            metrics["brief"]["AdapterScore"] = adapter_score
+            metrics_path = submission_path.replace(".jsonl", "_metrics.json")
+            save_json(metrics, metrics_path, save_pretty=True, sort_keys=False)
+            metrics_nms = None
+            latest_file_paths = [submission_path, metrics_path]
+        else:
+            metrics, metrics_nms, latest_file_paths = eval_epoch_post_processing(
+                submission, opt, eval_dataset.data, save_submission_filename
+            )
         return metrics, metrics_nms, eval_loss_meters, latest_file_paths
 
 
@@ -717,6 +784,9 @@ def setup_model(opt):
     # Configure option flags automatically based on variant
     variant = getattr(opt, "variant", None)
     if variant is not None:
+        # Part 2 has exactly one empty-set rule; the legacy existence head/gate
+        # is neither constructed nor used.
+        opt.use_exist_head = False
         if variant in ("G0", "G0-Con"):
             opt.enable_aec = True
             opt.aec_variant = variant
@@ -735,6 +805,59 @@ def setup_model(opt):
             opt.freeze_backbone = True
             opt.freeze_adapter = True
 
+    if getattr(opt, "feature_manifest", None):
+        opt.feature_manifest_sha256 = sha256_file(opt.feature_manifest)
+
+    # During public-P0 inference the checkpoint itself is the immutable
+    # EventInterface producer.  Stamp its hash before constructing the model so
+    # every emitted EventInterfaceV1 carries the complete provenance tuple.
+    if variant in {"P0", "P0-R"} and getattr(opt, "resume", None):
+        opt.public_p0_checkpoint_sha256 = sha256_file(opt.resume)
+
+    baseline_record = None
+    if variant is not None:
+        if not getattr(opt, "baseline_index", None):
+            raise ValueError("Part 2 requires --baseline_index")
+        with open(opt.baseline_index, "r", encoding="utf-8") as handle:
+            baseline_index = json.load(handle)
+        if baseline_index.get("variant") != "B0":
+            raise ValueError("Part 2 requires a finalized B0 baseline index")
+        # The baseline identity comes from the verified index, never from the
+        # historical parser default embedded in an older opt.json.
+        opt.baseline_variant = "B0"
+        seed_record = baseline_index.get("runs", {}).get(str(opt.seed))
+        if seed_record is None:
+            raise ValueError(f"Baseline index has no seed {opt.seed}")
+        baseline_record = seed_record["checkpoint"]
+        if sha256_file(baseline_record["path"]) != baseline_record["sha256"]:
+            raise ValueError("Baseline checkpoint hash mismatch")
+        if sha256_file(opt.feature_manifest) != baseline_index["feature_manifest"]["sha256"]:
+            raise ValueError("Baseline/feature manifest hash mismatch")
+        if sha256_file(opt.data_manifest_index) != baseline_index["data_manifest_index"]["sha256"]:
+            raise ValueError("Baseline/data manifest index hash mismatch")
+        opt.baseline_checkpoint_sha256 = baseline_record["sha256"]
+
+        calibration_path = getattr(opt, "count_calibration", None)
+        if calibration_path:
+            with open(calibration_path, "r", encoding="utf-8") as handle:
+                calibration = json.load(handle)
+            if calibration.get("variant") != variant or int(calibration.get("seed", -1)) != int(opt.seed):
+                raise ValueError("Count calibration variant/seed mismatch")
+            if calibration.get("split") != "val":
+                raise ValueError("Count calibration must be fitted on validation")
+            if calibration.get("baseline_checkpoint_sha256") != opt.baseline_checkpoint_sha256:
+                raise ValueError("Count calibration B0 hash mismatch")
+            if calibration.get("feature_manifest_sha256") != opt.feature_manifest_sha256:
+                raise ValueError("Count calibration feature hash mismatch")
+            if getattr(opt, "resume", None) and calibration.get("checkpoint_sha256") != sha256_file(opt.resume):
+                raise ValueError("Count calibration checkpoint hash mismatch")
+            if variant in {"G0", "G0-Con"} and not calibration.get("raw_threshold_calibration_sha256"):
+                raise ValueError("G0/G0-Con calibration must bind frozen G0-Threshold calibration")
+        elif hasattr(opt, "eval_results_dir") and variant in {"G0-Threshold", "G0", "G0-Con", "C1", "C2"}:
+            raise ValueError(f"{variant} inference requires --count_calibration")
+        if variant in {"P0", "P0-R"} and calibration_path:
+            raise ValueError("P0 inference must not use count calibration")
+
     from models.flash_vtg_gmr.model import build_model1
     model, criterion = build_model1(opt)
     if opt.device.type == "cuda":
@@ -744,11 +867,22 @@ def setup_model(opt):
 
     # Load backbone checkpoint (B0) if provided
     if getattr(opt, "init_backbone_ckpt", None) is not None:
+        if baseline_record is not None:
+            if os.path.realpath(opt.init_backbone_ckpt) != os.path.realpath(baseline_record["path"]):
+                raise ValueError("--init_backbone_ckpt is not the indexed checkpoint for this seed")
+            if sha256_file(opt.init_backbone_ckpt) != baseline_record["sha256"]:
+                raise ValueError("--init_backbone_ckpt hash mismatch")
         logger.info(f"Load backbone checkpoint from {opt.init_backbone_ckpt}")
         ckpt = torch.load(opt.init_backbone_ckpt, map_location="cpu", weights_only=False)
         state = ckpt.get("model", ckpt.get("state_dict"))
         backbone_state = {k: v for k, v in state.items() if not k.startswith("event_adapter") and not k.startswith("aec")}
         missing, unexpected = model.load_state_dict(backbone_state, strict=False)
+        illegal_missing = [key for key in missing if not key.startswith(("event_adapter.", "aec."))]
+        illegal_unexpected = [key for key in unexpected if not key.startswith("exist_head.")]
+        if illegal_missing or illegal_unexpected:
+            raise RuntimeError(
+                f"Invalid B0 partial init: missing={illegal_missing}, unexpected={illegal_unexpected}"
+            )
         logger.info(f"Backbone loaded. Missing: {len(missing)} keys, Unexpected: {len(unexpected)} keys")
 
     # Load adapter checkpoint (public P0) if provided
@@ -756,9 +890,24 @@ def setup_model(opt):
         logger.info(f"Load adapter checkpoint from {opt.adapter_ckpt}")
         ckpt = torch.load(opt.adapter_ckpt, map_location="cpu", weights_only=False)
         state = ckpt.get("model", ckpt.get("state_dict"))
-        adapter_state = {k: v for k, v in state.items() if k.startswith("event_adapter")}
-        missing, unexpected = model.load_state_dict(adapter_state, strict=False)
-        logger.info(f"Adapter loaded. Missing: {len(missing)} keys, Unexpected: {len(unexpected)} keys")
+        ckpt_seed = int(ckpt.get("seed", getattr(ckpt.get("opt", None), "seed", -1)))
+        if ckpt_seed != int(opt.seed):
+            raise ValueError(f"Public P0 seed mismatch: {ckpt_seed} != {opt.seed}")
+        expected_b0 = ckpt.get("baseline_checkpoint_sha256")
+        if expected_b0 != opt.baseline_checkpoint_sha256:
+            raise ValueError("Public P0 was not built from the indexed same-seed B0")
+        expected_feature = ckpt.get("feature_manifest_sha256")
+        if expected_feature != opt.feature_manifest_sha256:
+            raise ValueError("Public P0 feature manifest hash mismatch")
+        # Public P0 is a complete checkpoint.  Load B0 + adapter together and
+        # leave only the newly constructed AEC keys missing.
+        p0_state = {k: v for k, v in state.items() if not k.startswith("aec.")}
+        missing, unexpected = model.load_state_dict(p0_state, strict=False)
+        illegal_missing = [key for key in missing if not key.startswith("aec.")]
+        if illegal_missing or unexpected:
+            raise RuntimeError(f"Invalid public P0 checkpoint: missing={illegal_missing}, unexpected={unexpected}")
+        opt.public_p0_checkpoint_sha256 = sha256_file(opt.adapter_ckpt)
+        logger.info("Loaded complete B0+P0 checkpoint; only AEC remains newly initialized")
 
     # Freezing parameters
     if getattr(opt, "freeze_backbone", False):
@@ -789,6 +938,12 @@ def setup_model(opt):
         state = checkpoint.get("model", checkpoint.get("state_dict"))
         if state is None:
             raise KeyError("Checkpoint must contain 'model' or 'state_dict'")
+        if variant == "G0-Threshold":
+            # The indexed Part 1 B0 predates the Part 2 single-empty-set rule
+            # and contains a legacy existence head.  G0-Threshold reuses only
+            # the localization backbone; no other resume path gets this
+            # narrowly-scoped compatibility exception.
+            state = {key: value for key, value in state.items() if not key.startswith("exist_head.")}
         if any(k.startswith("module.") for k in state.keys()):
             new_state_dict = OrderedDict()
             for k, v in state.items():
@@ -857,7 +1012,7 @@ def start_inference(train_opt=None, split=None, splitfile=None):
         txt_drop_ratio=0,
         dset_domain=opt.dset_domain,
         mr_only=opt.mr_only,
-        keep_empty_gt=bool(getattr(opt, "use_exist_head", False)),
+        keep_empty_gt=(getattr(opt, "variant", None) is not None or bool(getattr(opt, "use_exist_head", False))),
         strict_data_contract=getattr(opt, "strict_data_contract", False),
         require_text_mask=getattr(opt, "require_text_mask", False),
         text_store_length=getattr(opt, "text_store_length", 77),
@@ -867,6 +1022,25 @@ def start_inference(train_opt=None, split=None, splitfile=None):
         split=opt.eval_split_name,
     )
     model, criterion, _, _ = setup_model(opt)
+    # A resolved, immutable inference configuration is part of every formal
+    # run record.  This is especially important for calibration-only
+    # G0-Threshold, which deliberately resumes a B0 checkpoint.
+    resolved_opt = {}
+    for key, value in vars(opt).items():
+        if value is None or isinstance(value, (str, int, float, bool)):
+            resolved_opt[key] = value
+        elif isinstance(value, (list, tuple)):
+            resolved_opt[key] = list(value)
+        elif isinstance(value, dict):
+            resolved_opt[key] = value
+        else:
+            resolved_opt[key] = str(value)
+    save_json(
+        resolved_opt,
+        os.path.join(opt.results_dir, "resolved_inference_opt.json"),
+        save_pretty=True,
+        sort_keys=True,
+    )
     save_submission_filename = "hl_{}_submission.jsonl".format(opt.eval_split_name)
 
     logger.info("Starting inference...")

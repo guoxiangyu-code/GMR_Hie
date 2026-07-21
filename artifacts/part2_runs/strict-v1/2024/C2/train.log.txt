@@ -1,0 +1,12 @@
+2026_07_21_17_41_16 [Epoch] 001 [Loss] loss_count 1.3292 loss_count_con 4.9586 loss_count_total 1.8250 loss_reg 0.2578 loss_cls 0.0212 weighted_loss_overall 1.8250
+2026_07_21_17_42_03 [Epoch] 002 [Loss] loss_count 1.0779 loss_count_con 5.3240 loss_count_total 1.6103 loss_reg 0.2581 loss_cls 0.0213 weighted_loss_overall 1.6103
+2026_07_21_17_42_48 [Epoch] 003 [Loss] loss_count 1.0345 loss_count_con 5.2843 loss_count_total 1.5630 loss_reg 0.2581 loss_cls 0.0216 weighted_loss_overall 1.5630
+2026_07_21_17_43_34 [Epoch] 004 [Loss] loss_count 1.0159 loss_count_con 5.3315 loss_count_total 1.5490 loss_reg 0.2599 loss_cls 0.0214 weighted_loss_overall 1.5490
+2026_07_21_17_44_19 [Epoch] 005 [Loss] loss_count 0.9988 loss_count_con 5.3037 loss_count_total 1.5292 loss_reg 0.2573 loss_cls 0.0215 weighted_loss_overall 1.5292
+2026_07_21_17_45_05 [Epoch] 006 [Loss] loss_count 0.9785 loss_count_con 5.3092 loss_count_total 1.5095 loss_reg 0.2601 loss_cls 0.0213 weighted_loss_overall 1.5095
+2026_07_21_17_45_50 [Epoch] 007 [Loss] loss_count 0.9556 loss_count_con 5.2955 loss_count_total 1.4852 loss_reg 0.2551 loss_cls 0.0210 weighted_loss_overall 1.4852
+2026_07_21_17_46_36 [Epoch] 008 [Loss] loss_count 0.9629 loss_count_con 5.2840 loss_count_total 1.4913 loss_reg 0.2562 loss_cls 0.0212 weighted_loss_overall 1.4913
+2026_07_21_17_47_21 [Epoch] 009 [Loss] loss_count 0.9355 loss_count_con 5.2726 loss_count_total 1.4627 loss_reg 0.2600 loss_cls 0.0213 weighted_loss_overall 1.4627
+2026_07_21_17_48_06 [Epoch] 010 [Loss] loss_count 0.9333 loss_count_con 5.2704 loss_count_total 1.4604 loss_reg 0.2564 loss_cls 0.0213 weighted_loss_overall 1.4604
+2026_07_21_17_48_52 [Epoch] 011 [Loss] loss_count 0.9123 loss_count_con 5.2842 loss_count_total 1.4407 loss_reg 0.2568 loss_cls 0.0212 weighted_loss_overall 1.4407
+Early Stop at epoch 10

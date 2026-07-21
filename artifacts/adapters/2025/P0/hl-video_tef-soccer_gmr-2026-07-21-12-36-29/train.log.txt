@@ -1,0 +1,3 @@
+2026_07_21_12_37_17 [Epoch] 001 [Loss] loss_reg 0.2924 loss_cls 0.0228 loss_exist 0.5048 loss_event 0.0403 loss_quality 0.0649 weighted_loss_overall 1.0165
+2026_07_21_12_38_01 [Epoch] 002 [Loss] loss_reg 0.2946 loss_cls 0.0228 loss_exist 0.5129 loss_event 0.0249 loss_quality 0.0371 weighted_loss_overall 0.9833
+2026_07_21_12_38_44 [Epoch] 003 [Loss] loss_reg 0.2899 loss_cls 0.0227 loss_exist 0.5109 loss_event 0.0245 loss_quality 0.0354 weighted_loss_overall 0.9743

@@ -1,0 +1,19 @@
+{
+  "artifact_type": "canonical-identity-audit",
+  "content_sha256": "f3b659acc3428eaa87a945dbfbdb3eee43e3a53199fa9ee5f3f9919f28765f2c",
+  "cross_split_qid_collisions": {},
+  "cross_split_vid_query_collisions": {},
+  "cross_split_video_collisions": {},
+  "dataset_setting": "standard",
+  "lexical_token_id_zero_count": 0,
+  "passed": true,
+  "phrase_alignment_status_counts": {
+    "action:aligned": 5639,
+    "team:aligned": 4639,
+    "team:missing-label": 1000
+  },
+  "query_key_count": 5639,
+  "row_key_count": 5639,
+  "schema_version": "hiea2m.part1.v1",
+  "video_key_count": 1957
+}

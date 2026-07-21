@@ -11,6 +11,11 @@ from models.flash_vtg_gmr.utils.basic_utils import (
     save_json,
 )
 import shutil
+import json
+import platform
+import sys
+
+from training.flash_vtg_gmr.contracts import canonical_json_sha256, sha256_file
 
 class BaseOptions(object):
     saved_option_filename = "opt.json"
@@ -59,7 +64,11 @@ class BaseOptions(object):
         parser.add_argument("--max_es_cnt", type=int, default=200,
                             help="number of epochs to early stop, use -1 to disable early stop")
         parser.add_argument("--bsz", type=int, default=32, help="mini-batch size")
-        parser.add_argument("--drop_last", type=bool, default=False, help="train_loader config")
+        parser.set_defaults(drop_last=False)
+        parser.add_argument("--drop_last", dest="drop_last", action="store_true",
+                            help="Drop an incomplete final training batch")
+        parser.add_argument("--no_drop_last", dest="drop_last", action="store_false",
+                            help="Keep an incomplete final training batch")
         parser.add_argument("--eval_bsz", type=int, default=100,
                             help="mini-batch size at inference, for query")
         parser.add_argument("--eval_epoch", type=int, default=2,
@@ -83,6 +92,29 @@ class BaseOptions(object):
         parser.add_argument("--max_v_l", type=int, default=-1)
         parser.add_argument("--clip_length", type=float, default=2)
         parser.add_argument("--max_windows", type=int, default=5)
+        parser.add_argument("--strict_data_contract", action="store_true",
+                            help="Require the frozen F-Lighthouse mask/shape/length contract")
+        parser.add_argument("--require_text_mask", action="store_true",
+                            help="Require NPZ attention_mask instead of synthesizing one")
+        parser.add_argument("--legacy_text_mask", action="store_true",
+                            help="Diagnostic only: ignore the stored text mask")
+        parser.add_argument("--legacy_gt_sampling", action="store_true",
+                            help="Diagnostic only: apply the legacy randomized GT cap to a copy")
+        parser.add_argument("--text_store_length", type=int, default=77)
+        parser.add_argument("--feature_manifest", type=str, default=None)
+        parser.add_argument("--data_manifest_index", type=str, default=None)
+        parser.add_argument(
+            "--baseline_variant",
+            choices=("B0-legacy", "B0-mask-only", "B0-gt-only", "B0"),
+            default="B0-legacy",
+        )
+        parser.add_argument("--repro_check", action="store_true")
+        parser.add_argument(
+            "--max_train_steps",
+            type=int,
+            default=-1,
+            help="Diagnostic cap on optimizer updates per epoch; -1 disables it",
+        )
 
         parser.add_argument("--train_path", type=str, default=None)
         parser.add_argument("--eval_path", type=str, default=None,
@@ -177,6 +209,18 @@ class BaseOptions(object):
                             help="Top-K windows used for GMR positive/negative classification metrics.")
         parser.add_argument("--pred_score_thd_for_cls", type=float, default=0.5,
                             help="Score threshold used to classify a query-video pair as positive in GMR metrics.")
+        # Part 2 parameters
+        parser.add_argument("--variant", type=str, default=None, help="Part 2 variant name")
+        parser.add_argument("--baseline_index", type=str, default=None, help="Baseline index file path")
+        parser.add_argument("--enable_adapter", action="store_true", help="Enable P0 event adapter")
+        parser.add_argument("--adapter_variant", type=str, default="P0", choices=["P0", "P0-R"], help="P0 variant")
+        parser.add_argument("--enable_aec", action="store_true", help="Enable event cardinality (AEC)")
+        parser.add_argument("--aec_variant", type=str, default="C1", choices=["G0", "G0-Con", "C1", "C2"], help="AEC variant")
+        parser.add_argument("--init_backbone_ckpt", type=str, default=None, help="Backbone checkpoint to initialize from")
+        parser.add_argument("--adapter_ckpt", type=str, default=None, help="Adapter checkpoint to load for AEC training")
+        parser.add_argument("--freeze_adapter", action="store_true", help="Freeze adapter weights during AEC training")
+        parser.add_argument("--freeze_backbone", action="store_true", help="Freeze backbone weights")
+        parser.add_argument("--count_calibration", type=str, default=None, help="Count calibration JSON file")
 
         parser.add_argument("--no_sort_results", action="store_true",
                             help="do not sort results, use this for moment query visualization")
@@ -259,7 +303,45 @@ class BaseOptions(object):
                          exclude_dirs=["results", "debug_results", "__pycache__"],
                          exclude_extensions=[".pyc", ".ipynb", ".swap"], )
 
+        if getattr(opt, "strict_data_contract", False):
+            if opt.baseline_variant != "B0-gt-only":
+                opt.require_text_mask = True
+            if opt.baseline_variant == "B0-gt-only":
+                opt.legacy_text_mask = True
+            if opt.txt_drop_ratio != 0:
+                raise ValueError("Strict B0 requires --txt_drop_ratio 0")
+            if opt.eval_bsz != 1:
+                raise ValueError(
+                    "Strict B0 requires --eval_bsz 1 because boundary decoding is single-sample"
+                )
+            if opt.baseline_variant in {"B0-gt-only", "B0"} and opt.max_windows != -1:
+                raise ValueError(f"{opt.baseline_variant} requires --max_windows -1")
+            if opt.feature_manifest is None:
+                raise ValueError("Strict B0 requires --feature_manifest")
+            self._validate_feature_manifest(opt)
+            if opt.data_manifest_index is None:
+                raise ValueError("Strict B0 requires --data_manifest_index")
+            self._validate_data_manifest(opt)
+        if getattr(opt, "repro_check", False):
+            opt.num_workers = 0
+
         self.display_save(opt)
+        if not isinstance(self, TestOptions):
+            with open(os.path.join(opt.results_dir, "command.txt"), "w", encoding="utf-8") as handle:
+                handle.write(" ".join([sys.executable, "-m", "training.flash_vtg_gmr.train", *sys.argv[1:]]) + "\n")
+            environment = {
+                "python": platform.python_version(),
+                "platform": platform.platform(),
+                "torch": torch.__version__,
+                "cuda_runtime": torch.version.cuda,
+                "cudnn": torch.backends.cudnn.version(),
+                "cuda_available": torch.cuda.is_available(),
+            }
+            save_json(
+                environment,
+                os.path.join(opt.results_dir, "environment.txt"),
+                save_pretty=True,
+            )
 
         opt.ckpt_filepath = os.path.join(opt.results_dir, self.ckpt_filename)
         opt.train_log_filepath = os.path.join(opt.results_dir, self.train_log_filename)
@@ -277,6 +359,140 @@ class BaseOptions(object):
 
         self.opt = opt
         return opt
+
+    @staticmethod
+    def _validate_feature_manifest(opt):
+        with open(opt.feature_manifest, "r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        stored_sha = manifest.get("content_sha256")
+        payload = dict(manifest)
+        payload.pop("content_sha256", None)
+        if stored_sha != canonical_json_sha256(payload):
+            raise ValueError("Feature manifest content SHA256 mismatch")
+        if manifest.get("concat_order") != ["slowfast", "clip"]:
+            raise ValueError("Feature manifest requires [slowfast, clip] order")
+        if manifest.get("setting") != "f-lighthouse":
+            raise ValueError(
+                f"Formal Part 1 runs require setting=f-lighthouse, got {manifest.get('setting')}"
+            )
+        if manifest.get("stream_dimensions") != {"slowfast": 2304, "clip": 512}:
+            raise ValueError("Feature manifest stream dimensions mismatch")
+        if int(manifest.get("video_feature_dim", -1)) != 2816:
+            raise ValueError("Feature manifest video dimension must be 2816")
+        if int(manifest.get("text_feature_dim", -1)) != 512:
+            raise ValueError("Feature manifest text dimension must be 512")
+        if manifest.get("per_stream_normalization") is not True:
+            raise ValueError("Formal Part 1 runs require per-stream normalization")
+        if float(manifest.get("normalization_eps", -1)) != 1e-5:
+            raise ValueError("Formal Part 1 runs require normalization_eps=1e-5")
+        if manifest.get("known_provenance") is not True:
+            raise ValueError("Formal Part 1 runs require known Lighthouse provenance")
+        if manifest.get("encoder_mode") != "eval":
+            raise ValueError("Formal Part 1 runs require Lighthouse encoders in eval mode")
+        if manifest.get("text_token_alignment_status") != "verified":
+            raise ValueError("Formal Part 1 runs require verified text token alignment")
+        if manifest.get("cross_stream_length_policy") != (
+            "lighthouse-trim-shorter-at-extraction; exact-or-fail-loader"
+        ):
+            raise ValueError("Unexpected Lighthouse cross-stream length policy")
+        batch_audit = manifest.get("batch_invariance_audit", {})
+        if int(batch_audit.get("shared_video_count", 0)) < 50:
+            raise ValueError("Formal Part 1 runs require a 50-video batch-invariance audit")
+
+        def _verify_artifact(path, expected_sha, label):
+            if not path or not os.path.isfile(path):
+                raise FileNotFoundError(f"Missing frozen {label}: {path}")
+            actual_sha = sha256_file(path)
+            if actual_sha != expected_sha:
+                raise ValueError(
+                    f"Frozen {label} SHA256 mismatch: {actual_sha} != {expected_sha}"
+                )
+
+        for key in (
+            "extraction_provenance",
+            "numerical_audit",
+            "identity_audit",
+            "text_alignment_audit",
+            "batch_invariance_audit",
+        ):
+            record = manifest.get(key, {})
+            _verify_artifact(record.get("path"), record.get("sha256"), key)
+        runtime_records = manifest.get("extraction_runtime", {})
+        if set(runtime_records) != {"video_shard_0", "video_shard_1", "text_shard_0"}:
+            raise ValueError("Feature manifest extraction runtime inventory mismatch")
+        for key, record in runtime_records.items():
+            _verify_artifact(record.get("path"), record.get("sha256"), key)
+        for record in manifest.get("video_inventory", {}).values():
+            _verify_artifact(
+                record.get("slowfast_path"),
+                record.get("slowfast_sha256"),
+                "SlowFast feature",
+            )
+            _verify_artifact(
+                record.get("clip_path"), record.get("clip_sha256"), "CLIP feature"
+            )
+        for record in manifest.get("query_inventory", {}).values():
+            _verify_artifact(
+                record.get("text_path"), record.get("text_sha256"), "text feature"
+            )
+        expected_dirs = [manifest.get("slowfast_dir"), manifest.get("clip_dir")]
+        actual_dirs = list(opt.v_feat_dirs or [])
+        if len(actual_dirs) != 2:
+            raise ValueError("Strict feature contract requires exactly two video feature directories")
+        resolved_expected = [os.path.realpath(path) for path in expected_dirs]
+        resolved_actual = [os.path.realpath(path) for path in actual_dirs]
+        if resolved_expected != resolved_actual:
+            raise ValueError(
+                f"Video feature order/path mismatch: expected {expected_dirs}, got {actual_dirs}"
+            )
+        if os.path.realpath(manifest.get("text_dir")) != os.path.realpath(opt.t_feat_dir):
+            raise ValueError("Text feature directory does not match feature manifest")
+        if float(manifest.get("clip_length")) != float(opt.clip_length):
+            raise ValueError("clip_length does not match feature manifest")
+        if int(manifest.get("text_context_length_model")) != int(opt.max_q_l):
+            raise ValueError("max_q_l does not match feature manifest")
+        if int(opt.v_feat_dim) != int(manifest["video_feature_dim"]):
+            raise ValueError("v_feat_dim does not match feature manifest")
+        if int(opt.t_feat_dim) != int(manifest["text_feature_dim"]):
+            raise ValueError("t_feat_dim does not match feature manifest")
+        if int(opt.max_v_l) != 75:
+            raise ValueError("Strict B0 requires max_v_l=75")
+        if opt.ctx_mode != "video_tef":
+            raise ValueError("Strict B0 requires ctx_mode=video_tef")
+        if opt.no_norm_vfeat or opt.no_norm_tfeat:
+            raise ValueError("Strict B0 requires video and text normalization")
+
+    @staticmethod
+    def _validate_data_manifest(opt):
+        with open(opt.data_manifest_index, "r", encoding="utf-8") as handle:
+            index = json.load(handle)
+        stored_sha = index.get("content_sha256")
+        payload = dict(index)
+        payload.pop("content_sha256", None)
+        if stored_sha != canonical_json_sha256(payload):
+            raise ValueError("Data manifest index content SHA256 mismatch")
+        with open(opt.feature_manifest, "r", encoding="utf-8") as handle:
+            feature_manifest = json.load(handle)
+        if index.get("dataset_setting") != feature_manifest.get("dataset_setting"):
+            raise ValueError("Data/feature manifest dataset_setting mismatch")
+        if index["feature_manifest"]["content_sha256"] != feature_manifest["content_sha256"]:
+            raise ValueError("Data manifest was built from a different feature manifest")
+
+        paths_to_validate = []
+        if opt.train_path is not None:
+            paths_to_validate.append(("train", opt.train_path))
+        if opt.eval_path is not None:
+            paths_to_validate.append((str(opt.eval_split_name), opt.eval_path))
+        for split, actual_path in paths_to_validate:
+            if split not in index["data_manifests"]:
+                raise ValueError(f"Data manifest index has no split {split!r}")
+            record = index["data_manifests"][split]
+            if os.path.realpath(record["path"]) != os.path.realpath(actual_path):
+                raise ValueError(
+                    f"{split} path does not match canonical manifest: {actual_path}"
+                )
+            if sha256_file(actual_path) != record["sha256"]:
+                raise ValueError(f"Canonical {split} manifest SHA256 mismatch")
 
 
 class TestOptions(BaseOptions):

@@ -19,7 +19,10 @@ from training.flash_vtg_gmr.dataset import (
 )
 from training.flash_vtg_gmr.postprocessing import PostProcessorDETR
 from models.flash_vtg_gmr.standalone_eval.eval import eval_submission
+from eval.metrics import compute_gmr_cls
+from eval.normalization import load_ts_window_cfg, normalize_ground_truth
 from models.flash_vtg_gmr.utils.basic_utils import save_jsonl, save_json
+from training.flash_vtg_gmr.reproducibility import configure_runtime, restore_rng_state
 
 import nncore
 from nncore.ops import temporal_iou
@@ -27,11 +30,44 @@ from nncore.ops import temporal_iou
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_legacy_cls_summary(submission, ground_truth, threshold):
+    """Map the maintained GMR-CLS evaluator to the legacy training log fields."""
+    threshold = float(threshold)
+    cls_metrics = compute_gmr_cls(
+        submission,
+        ground_truth,
+        thresholds=(threshold,),
+    )
+    confusion = cls_metrics["per_threshold"][str(threshold)]
+    tp, tn = confusion["TP"], confusion["TN"]
+    fp, fn = confusion["FP"], confusion["FN"]
+    tpr = 100.0 * tp / (tp + fn) if tp + fn else 0.0
+    tnr = 100.0 * tn / (tn + fp) if tn + fp else 0.0
+    return {
+        "TPR": round(tpr, 2),
+        "TNR": round(tnr, 2),
+        "BalancedAcc": round((tpr + tnr) / 2.0, 2),
+    }
 logging.basicConfig(
     format="%(asctime)s.%(msecs)03d:%(levelname)s:%(name)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     level=logging.INFO,
 )
+
+
+def clamp_prediction_to_decode_duration(prediction):
+    decode_duration = float(prediction.pop("_decode_duration"))
+    clamped = []
+    for window in prediction["pred_relevant_windows"]:
+        start = max(0.0, min(float(window[0]), decode_duration))
+        end = max(0.0, min(float(window[1]), decode_duration))
+        if end <= start:
+            continue
+        clamped.append([start, end, *window[2:]])
+    prediction["pred_relevant_windows"] = clamped
+    return prediction
 
 
 def post_processing_mr_nms(mr_res, nms_thd, max_before_nms, max_after_nms, nms_type):
@@ -78,27 +114,22 @@ def eval_epoch_post_processing(submission, opt, gt_data, save_submission_filenam
         )
         if getattr(opt, "use_exist_head", False):
             from models.flash_vtg_gmr.utils.basic_utils import load_jsonl
-            eval_gmr_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'eval_GMR', 'v1'))
-            if eval_gmr_dir not in sys.path:
-                sys.path.insert(0, eval_gmr_dir)
-            from eval_v1_3 import compute_gmr_cls_metrics, normalize_ground_truth, _load_ts_window_cfg
 
             gt_raw = load_jsonl(opt.eval_path)
-            ts_cfg = _load_ts_window_cfg(None)
+            ts_cfg = load_ts_window_cfg(None)
             gt, _ = normalize_ground_truth(gt_raw, ts_cfg, drop_empty_gt=False)
+            from eval.eval_main import validate_qid_coverage
 
-            pred_qids = set(e["qid"] for e in submission if isinstance(e, dict) and "qid" in e)
-            shared_qids = pred_qids.intersection(set(e["qid"] for e in gt))
-            submission_aligned = [e for e in submission if e.get("qid") in shared_qids]
-            gt_aligned = [e for e in gt if e.get("qid") in shared_qids]
+            validate_qid_coverage(submission, gt)
+            shared_qids = {e["qid"] for e in gt}
+            submission_aligned = submission
+            gt_aligned = gt
 
-            pred_topk_for_cls = int(getattr(opt, "pred_topk_for_cls", 10))
             pred_score_thd_for_cls = float(getattr(opt, "pred_score_thd_for_cls", 0.5))
-            cls_metrics = compute_gmr_cls_metrics(
+            cls_metrics = _compute_legacy_cls_summary(
                 submission_aligned,
                 gt_aligned,
-                pred_topk=pred_topk_for_cls,
-                pred_score_thd=pred_score_thd_for_cls,
+                threshold=pred_score_thd_for_cls,
             )
             metrics["brief"]["GMR-TPR"] = cls_metrics["TPR"]
             metrics["brief"]["GMR-TNR"] = cls_metrics["TNR"]
@@ -139,13 +170,11 @@ def eval_epoch_post_processing(submission, opt, gt_data, save_submission_filenam
             )
             if getattr(opt, "use_exist_head", False):
                 submission_after_nms_aligned = [e for e in submission_after_nms if e.get("qid") in shared_qids]
-                pred_topk_for_cls = int(getattr(opt, "pred_topk_for_cls", 10))
                 pred_score_thd_for_cls = float(getattr(opt, "pred_score_thd_for_cls", 0.5))
-                cls_metrics_nms = compute_gmr_cls_metrics(
+                cls_metrics_nms = _compute_legacy_cls_summary(
                     submission_after_nms_aligned,
                     gt_aligned,
-                    pred_topk=pred_topk_for_cls,
-                    pred_score_thd=pred_score_thd_for_cls,
+                    threshold=pred_score_thd_for_cls,
                 )
                 metrics_nms["brief"]["GMR-TPR"] = cls_metrics_nms["TPR"]
                 metrics_nms["brief"]["GMR-TNR"] = cls_metrics_nms["TNR"]
@@ -282,6 +311,139 @@ def compute_hl_results(
     return submmission, loss_meters
 
 # for MR
+def select_predictions_for_inference(outputs, opt, meta):
+    # outputs: output dict from model
+    # opt: argparse Namespace
+    # meta: sample metadata dict (contains qid, duration, etc.)
+    # Returns: list of [start, end, score] in seconds
+    
+    variant = getattr(opt, "variant", None)
+    duration = float(meta["duration"])
+    
+    if variant is None:
+        return outputs["_out"]["boundary"].tolist()
+
+    # AEC / P0 / G0 variants
+    tau_mode = 0.5
+    tau_raw = 0.5
+    
+    if getattr(opt, "count_calibration", None) is not None:
+        try:
+            import json
+            with open(opt.count_calibration, "r") as f:
+                calib = json.load(f)
+            tau_mode = float(calib.get("tau_mode", 0.5))
+            tau_raw = float(calib.get("tau_raw", 0.5))
+        except Exception as e:
+            logger.warning(f"Failed to load count calibration: {e}")
+
+    if variant == "G0-Threshold":
+        cand_span = outputs["candidate_span"][0]  # (K, 2)
+        cand_logit = outputs["candidate_logit"][0]  # (K,)
+        cand_mask = outputs["candidate_mask"][0]  # (K,)
+        
+        scores = torch.sigmoid(cand_logit)  # (K,)
+        selected = []
+        for idx in range(cand_span.shape[0]):
+            if cand_mask[idx] and scores[idx] >= tau_raw:
+                s, e = cand_span[idx].tolist()
+                selected.append([s * duration, e * duration, float(scores[idx])])
+        selected.sort(key=lambda x: x[2], reverse=True)
+        return selected
+
+    elif variant in ("G0", "G0-Con"):
+        count_probs = outputs["pred_count_probs"][0]  # (5,)
+        pred_count = int(count_probs.argmax().item())
+        
+        if pred_count == 0:
+            return []
+            
+        cand_span = outputs["candidate_span"][0]  # (K, 2)
+        cand_logit = outputs["candidate_logit"][0]  # (K,)
+        cand_mask = outputs["candidate_mask"][0]  # (K,)
+        
+        scores = torch.sigmoid(cand_logit)  # (K,)
+        valid_indices = torch.where(cand_mask)[0].tolist()
+        
+        valid_candidates = [(idx, float(scores[idx])) for idx in valid_indices]
+        valid_candidates.sort(key=lambda x: x[1], reverse=True)
+        
+        if pred_count in (1, 2, 3):
+            keep_n = min(pred_count, len(valid_candidates))
+            chosen = valid_candidates[:keep_n]
+        else:
+            above_thd = [x for x in valid_candidates if x[1] >= tau_raw]
+            if len(above_thd) < 4:
+                chosen = valid_candidates[:min(4, len(valid_candidates))]
+            else:
+                chosen = above_thd[:min(10, len(above_thd))]
+                
+        res = []
+        for idx, score in chosen:
+            s, e = cand_span[idx].tolist()
+            res.append([s * duration, e * duration, score])
+        return res
+
+    elif variant in ("P0", "P0-R"):
+        event_span = outputs["event_span"][0]  # (M, 2)
+        event_logit = outputs["event_logit"][0]  # (M,)
+        quality_logit = outputs["quality_logit"][0]  # (M,)
+        event_mask = outputs["event_mask"][0]  # (M,)
+        
+        event_score = torch.sigmoid(event_logit)
+        qual_score = torch.sigmoid(quality_logit)
+        mode_score = event_score * qual_score
+        
+        chosen = []
+        for idx in range(event_span.shape[0]):
+            if event_mask[idx] and event_score[idx] >= 0.5:
+                chosen.append((idx, float(mode_score[idx])))
+        chosen.sort(key=lambda x: x[1], reverse=True)
+        
+        res = []
+        for idx, score in chosen:
+            s, e = event_span[idx].tolist()
+            res.append([s * duration, e * duration, score])
+        return res
+
+    elif variant in ("C1", "C2"):
+        count_probs = outputs["pred_count_probs"][0]  # (5,)
+        pred_count = int(count_probs.argmax().item())
+        
+        if pred_count == 0:
+            return []
+            
+        event_span = outputs["event_span"][0]  # (M, 2)
+        event_logit = outputs["event_logit"][0]  # (M,)
+        quality_logit = outputs["quality_logit"][0]  # (M,)
+        event_mask = outputs["event_mask"][0]  # (M,)
+        
+        event_score = torch.sigmoid(event_logit)
+        qual_score = torch.sigmoid(quality_logit)
+        mode_score = event_score * qual_score
+        
+        valid_indices = torch.where(event_mask)[0].tolist()
+        valid_modes = [(idx, float(mode_score[idx]), float(event_score[idx])) for idx in valid_indices]
+        valid_modes.sort(key=lambda x: x[1], reverse=True)
+        
+        if pred_count in (1, 2, 3):
+            keep_n = min(pred_count, len(valid_modes))
+            chosen = valid_modes[:keep_n]
+        else:
+            above_thd = [x for x in valid_modes if x[2] >= tau_mode]
+            if len(above_thd) < 4:
+                chosen = valid_modes[:min(4, len(valid_modes))]
+            else:
+                chosen = above_thd[:min(10, len(above_thd))]
+                
+        res = []
+        for idx, score, _ in chosen:
+            s, e = event_span[idx].tolist()
+            res.append([s * duration, e * duration, score])
+        return res
+
+    return []
+
 @torch.no_grad()
 def compute_mr_results(
     model, eval_loader, opt, epoch_i=None, criterion=None, tb_writer=None
@@ -304,6 +466,13 @@ def compute_mr_results(
             targets["label"] = batch[0]
             bsz = int(model_inputs["src_vid"].shape[0])
             targets["fps"] = torch.full((bsz,), 1 / opt.clip_length, device=opt.device)
+            counts = []
+            for meta in batch[0]:
+                rel_wins = meta.get("relevant_windows", [])
+                if rel_wins is None:
+                    rel_wins = []
+                counts.append(min(len(rel_wins), 4))
+            targets["count_class"] = torch.tensor(counts, dtype=torch.long, device=opt.device)
         else:
             targets = {}
         outputs = model(**model_inputs, targets=targets)
@@ -322,17 +491,18 @@ def compute_mr_results(
             boundary_out[:, 2] = boundary_out[:, 2] * float(mult[0])
 
         if opt.span_loss_type == "l1":
-            _bnd = boundary_out if boundary_out is not None else outputs["_out"]["boundary"]
-            scores = _bnd[:, 2]
-            pred_spans = _bnd[:, :2].unsqueeze(0)
-            _saliency_scores = outputs["_out"]["saliency"].unsqueeze(0)
+            _bnd = boundary_out if boundary_out is not None else (outputs.get("_out", {}).get("boundary") if "_out" in outputs else None)
+            scores = _bnd[:, 2] if _bnd is not None else None
+            pred_spans = _bnd[:, :2].unsqueeze(0) if _bnd is not None else None
+            _saliency_scores = outputs["_out"]["saliency"].unsqueeze(0) if "_out" in outputs else None
 
             saliency_scores = []
-            valid_vid_lengths = outputs["_out"]["video_msk"].sum(1).cpu().tolist()
-            for j in range(len(valid_vid_lengths)):
-                ss = _saliency_scores[j, : int(valid_vid_lengths[j])].tolist()
-                ss = [float(f"{e:.3f}") for e in ss]
-                saliency_scores.append(ss)
+            if _saliency_scores is not None:
+                valid_vid_lengths = outputs["_out"]["video_msk"].sum(1).cpu().tolist()
+                for j in range(len(valid_vid_lengths)):
+                    ss = _saliency_scores[j, : int(valid_vid_lengths[j])].tolist()
+                    ss = [float(f"{e:.3f}") for e in ss]
+                    saliency_scores.append(ss)
         else:
             bsz, n_queries = outputs["pred_spans"].shape[
                 :2
@@ -348,28 +518,68 @@ def compute_mr_results(
             pred_spans *= opt.clip_length
 
         # compose predictions
-        for idx, (meta, spans, score) in enumerate(
-            zip(query_meta, pred_spans.cpu(), scores.cpu())
-        ):
-            spans_src = boundary_out if boundary_out is not None else outputs["_out"]["boundary"]
-            spans = torch.clamp(spans_src, 0, meta["duration"])
-            cur_ranked_preds = spans.tolist()
-            cur_ranked_preds = [
-                [float(f"{e:.3f}") for e in row] for row in cur_ranked_preds
-            ]
-            cur_query_pred = dict(
-                qid=meta["qid"],
-                query=meta["query"],
-                vid=meta["vid"],
-                pred_relevant_windows=cur_ranked_preds,
-            )
-            # Only include saliency outputs when running HL-style evaluation.
-            # For MR-only/GMR usage, GT typically has no saliency fields, so omit this to keep submission minimal.
-            if not getattr(opt, "mr_only", False):
-                cur_query_pred["pred_saliency_scores"] = saliency_scores[idx]
-            if pred_exist_scores is not None:
-                cur_query_pred["pred_exist_score"] = float(f"{float(pred_exist_scores[idx]):.3f}")
-            mr_res.append(cur_query_pred)
+        for idx, meta in enumerate(query_meta):
+            if getattr(opt, "variant", None) is not None:
+                cur_ranked_preds = select_predictions_for_inference(outputs, opt, meta)
+                cur_ranked_preds = [
+                    [float(f"{e[0]:.3f}"), float(f"{e[1]:.3f}"), float(f"{e[2]:.3f}")]
+                    for e in cur_ranked_preds
+                ]
+                decode_duration = float(meta.get("D_decode", meta["duration"]))
+                cur_query_pred = dict(
+                    qid=meta["qid"],
+                    query=meta["query"],
+                    vid=meta["vid"],
+                    pred_relevant_windows=cur_ranked_preds,
+                    _decode_duration=decode_duration,
+                )
+                if "pred_count_probs" in outputs:
+                    pred_count = int(outputs["pred_count_probs"][0].argmax().item())
+                    cur_query_pred["pred_count"] = pred_count
+                
+                # Save oracle modes and raw proposals for diagnostics
+                if "event_span" in outputs:
+                    event_span = outputs["event_span"][0]
+                    event_mask = outputs["event_mask"][0]
+                    duration = float(meta["duration"])
+                    modes = []
+                    for m_i in range(event_span.shape[0]):
+                        if event_mask[m_i]:
+                            s, e = event_span[m_i].tolist()
+                            modes.append([float(f"{s * duration:.3f}"), float(f"{e * duration:.3f}")])
+                    cur_query_pred["oracle_mode_windows"] = modes
+
+                if "candidate_span" in outputs:
+                    cand_span = outputs["candidate_span"][0]
+                    cand_mask = outputs["candidate_mask"][0]
+                    duration = float(meta["duration"])
+                    cands = []
+                    for c_i in range(cand_span.shape[0]):
+                        if cand_mask[c_i]:
+                            s, e = cand_span[c_i].tolist()
+                            cands.append([float(f"{s * duration:.3f}"), float(f"{e * duration:.3f}")])
+                    cur_query_pred["raw_proposal_windows"] = cands
+                mr_res.append(cur_query_pred)
+            else:
+                spans_src = boundary_out if boundary_out is not None else outputs["_out"]["boundary"]
+                decode_duration = float(meta.get("D_decode", meta["duration"]))
+                spans = torch.clamp(spans_src, 0, decode_duration)
+                cur_ranked_preds = spans.tolist()
+                cur_ranked_preds = [
+                    [float(f"{e:.3f}") for e in row] for row in cur_ranked_preds
+                ]
+                cur_query_pred = dict(
+                    qid=meta["qid"],
+                    query=meta["query"],
+                    vid=meta["vid"],
+                    pred_relevant_windows=cur_ranked_preds,
+                    _decode_duration=decode_duration,
+                )
+                if not getattr(opt, "mr_only", False):
+                    cur_query_pred["pred_saliency_scores"] = saliency_scores[idx]
+                if pred_exist_scores is not None:
+                    cur_query_pred["pred_exist_score"] = float(f"{float(pred_exist_scores[idx]):.3f}")
+                mr_res.append(cur_query_pred)
 
         loss_dict = {k: v for k, v in outputs.items() if 'loss' in k}
         losses = sum(loss_dict.values())
@@ -426,6 +636,8 @@ def compute_mr_results(
         )
 
     mr_res = post_processor(mr_res)
+    for prediction in mr_res:
+        clamp_prediction_to_decode_duration(prediction)
     return mr_res, loss_meters
 
 
@@ -501,12 +713,65 @@ def eval_epoch(
 def setup_model(opt):
     """setup model/optimizer/scheduler and load checkpoints when needed"""
     logger.info("setup model/optimizer/scheduler")
+    
+    # Configure option flags automatically based on variant
+    variant = getattr(opt, "variant", None)
+    if variant is not None:
+        if variant in ("G0", "G0-Con"):
+            opt.enable_aec = True
+            opt.aec_variant = variant
+            opt.freeze_backbone = True
+            opt.enable_adapter = False
+        elif variant in ("P0", "P0-R"):
+            opt.enable_adapter = True
+            opt.adapter_variant = variant
+            opt.freeze_backbone = True
+            opt.enable_aec = False
+        elif variant in ("C1", "C2"):
+            opt.enable_adapter = True
+            opt.adapter_variant = "P0"
+            opt.enable_aec = True
+            opt.aec_variant = variant
+            opt.freeze_backbone = True
+            opt.freeze_adapter = True
+
     from models.flash_vtg_gmr.model import build_model1
     model, criterion = build_model1(opt)
     if opt.device.type == "cuda":
         logger.info("CUDA enabled.")
         model.to(opt.device)
         criterion.to(opt.device)
+
+    # Load backbone checkpoint (B0) if provided
+    if getattr(opt, "init_backbone_ckpt", None) is not None:
+        logger.info(f"Load backbone checkpoint from {opt.init_backbone_ckpt}")
+        ckpt = torch.load(opt.init_backbone_ckpt, map_location="cpu", weights_only=False)
+        state = ckpt.get("model", ckpt.get("state_dict"))
+        backbone_state = {k: v for k, v in state.items() if not k.startswith("event_adapter") and not k.startswith("aec")}
+        missing, unexpected = model.load_state_dict(backbone_state, strict=False)
+        logger.info(f"Backbone loaded. Missing: {len(missing)} keys, Unexpected: {len(unexpected)} keys")
+
+    # Load adapter checkpoint (public P0) if provided
+    if getattr(opt, "adapter_ckpt", None) is not None:
+        logger.info(f"Load adapter checkpoint from {opt.adapter_ckpt}")
+        ckpt = torch.load(opt.adapter_ckpt, map_location="cpu", weights_only=False)
+        state = ckpt.get("model", ckpt.get("state_dict"))
+        adapter_state = {k: v for k, v in state.items() if k.startswith("event_adapter")}
+        missing, unexpected = model.load_state_dict(adapter_state, strict=False)
+        logger.info(f"Adapter loaded. Missing: {len(missing)} keys, Unexpected: {len(unexpected)} keys")
+
+    # Freezing parameters
+    if getattr(opt, "freeze_backbone", False):
+        logger.info("Freezing backbone parameters")
+        for n, p in model.named_parameters():
+            if not n.startswith("event_adapter") and not n.startswith("aec"):
+                p.requires_grad = False
+
+    if getattr(opt, "freeze_adapter", False):
+        logger.info("Freezing adapter parameters")
+        for n, p in model.named_parameters():
+            if n.startswith("event_adapter"):
+                p.requires_grad = False
 
     param_dicts = [
         {
@@ -516,20 +781,11 @@ def setup_model(opt):
     ]
     optimizer = torch.optim.AdamW(param_dicts, lr=opt.lr, weight_decay=opt.wd)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, opt.lr_drop, gamma=0.5)
-    # lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=15, min_lr=1e-4)
-
-    if opt.resume_adapter is not None:
-        logger.info(f"Load adapter checkpoint from {opt.resume_adapter}")
-        adapter_checkpoint = torch.load(opt.resume_adapter)
-        adapter_state_dict = {k: v for k, v in adapter_checkpoint['state_dict'].items() if k.startswith('adapter')}
-        model.load_state_dict(adapter_state_dict, strict=False)
 
     if opt.resume is not None:
         logger.info(f"Load checkpoint from {opt.resume}")
-        checkpoint = torch.load(opt.resume, map_location="cpu")
-
+        checkpoint = torch.load(opt.resume, map_location="cpu", weights_only=False)
         from collections import OrderedDict
-
         state = checkpoint.get("model", checkpoint.get("state_dict"))
         if state is None:
             raise KeyError("Checkpoint must contain 'model' or 'state_dict'")
@@ -542,9 +798,14 @@ def setup_model(opt):
         else:
             model.load_state_dict(state, strict=True)
         if opt.resume_all:
+            if getattr(opt, "strict_data_contract", False) and checkpoint.get("checkpoint_boundary") != "epoch":
+                raise ValueError("Strict resume only supports checkpoints saved at an epoch boundary")
             optimizer.load_state_dict(checkpoint["optimizer"])
             lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
             opt.start_epoch = checkpoint["epoch"] + 1
+            opt._resume_rng_state = checkpoint.get("reproducibility_state")
+            opt._resume_training_state = checkpoint.get("training_state")
+            restore_rng_state(opt._resume_rng_state)
     else:
         logger.warning(
             "If you intend to evaluate the model, please specify --resume with ckpt path"
@@ -569,8 +830,7 @@ def start_inference(train_opt=None, split=None, splitfile=None):
     print(opt.eval_path)
     logger.info("Setup config, data and model...")
 
-    cudnn.benchmark = True
-    cudnn.deterministic = False
+    configure_runtime(repro_check=bool(getattr(opt, "repro_check", False)))
 
     assert opt.eval_path is not None
     if opt.eval_split_name == "val":
@@ -598,6 +858,13 @@ def start_inference(train_opt=None, split=None, splitfile=None):
         dset_domain=opt.dset_domain,
         mr_only=opt.mr_only,
         keep_empty_gt=bool(getattr(opt, "use_exist_head", False)),
+        strict_data_contract=getattr(opt, "strict_data_contract", False),
+        require_text_mask=getattr(opt, "require_text_mask", False),
+        text_store_length=getattr(opt, "text_store_length", 77),
+        legacy_text_mask=getattr(opt, "legacy_text_mask", False),
+        legacy_gt_sampling=getattr(opt, "legacy_gt_sampling", False),
+        seed=getattr(opt, "seed", 2024),
+        split=opt.eval_split_name,
     )
     model, criterion, _, _ = setup_model(opt)
     save_submission_filename = "hl_{}_submission.jsonl".format(opt.eval_split_name)

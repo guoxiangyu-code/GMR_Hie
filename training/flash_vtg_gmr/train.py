@@ -25,13 +25,17 @@ from models.flash_vtg_gmr.utils.basic_utils import AverageMeter, dict_to_markdow
 import nncore
 from datetime import datetime
 import logging
+from training.flash_vtg_gmr.reproducibility import (
+    capture_rng_state,
+    configure_runtime,
+    make_data_generator,
+    restore_rng_state,
+    seed_everything,
+    seed_worker,
+)
 
 def set_seed(seed, use_cuda=True):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if use_cuda:
-        torch.cuda.manual_seed_all(seed)
+    seed_everything(seed, use_cuda=use_cuda)
 
 def train_epoch(model, criterion, train_loader, optimizer, opt, epoch_i, tb_writer):
     logger.info(f"[Epoch {epoch_i+1}]")
@@ -54,6 +58,16 @@ def train_epoch(model, criterion, train_loader, optimizer, opt, epoch_i, tb_writ
         targets["label"] = batch[0]
         bsz = int(model_inputs["src_vid"].shape[0])
         targets["fps"] = torch.full((bsz,), 1 / opt.clip_length, device=opt.device)  # fps=1/clip_len
+
+        # Compute count class for AEC
+        counts = []
+        for meta in batch[0]:
+            rel_wins = meta.get("relevant_windows", [])
+            if rel_wins is None:
+                rel_wins = []
+            counts.append(min(len(rel_wins), 4))
+        targets["count_class"] = torch.tensor(counts, dtype=torch.long, device=opt.device)
+
         outputs = model(**model_inputs, targets=targets)
 
         loss_dict = criterion(batch, outputs, targets)
@@ -65,22 +79,42 @@ def train_epoch(model, criterion, train_loader, optimizer, opt, epoch_i, tb_writ
             loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict
         )
 
-        if torch.isnan(losses).any():
-            print("Loss contains NaN values")
+        nonfinite = {
+            key: value
+            for key, value in loss_dict.items()
+            if torch.is_tensor(value) and not torch.isfinite(value).all()
+        }
+        if nonfinite or not torch.isfinite(losses).all():
+            identities = [(meta.get("qid"), meta.get("vid")) for meta in batch[0]]
+            raise FloatingPointError(
+                f"Non-finite loss for identities={identities}, terms={list(nonfinite)}"
+            )
 
         optimizer.zero_grad()
         losses.backward()
 
         if opt.grad_clip > 0:
             nn.utils.clip_grad_norm_(
-                model.parameters(), opt.grad_clip, error_if_nonfinite=False
+                model.parameters(), opt.grad_clip, error_if_nonfinite=True
             )
         optimizer.step()
 
-        loss_dict["weighted_loss_overall"] = float(losses)  # for logging only
+        if opt.repro_check:
+            trace_path = os.path.join(opt.results_dir, "repro_trace.jsonl")
+            trace_record = {
+                "epoch": int(epoch_i),
+                "step": int(batch_idx),
+                "qids": [meta.get("qid") for meta in batch[0]],
+                "weighted_loss": float(losses.detach()),
+                "learning_rate": float(optimizer.param_groups[0]["lr"]),
+            }
+            with open(trace_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(trace_record, sort_keys=True) + "\n")
+
+        loss_dict["weighted_loss_overall"] = float(losses.detach())  # for logging only
         for k, v in loss_dict.items():
             loss_meters[k].update(
-                float(v)
+                float(v.detach()) if torch.is_tensor(v) else float(v)
             )
 
         # Output and log loss info every iteration
@@ -91,6 +125,9 @@ def train_epoch(model, criterion, train_loader, optimizer, opt, epoch_i, tb_writ
         tb_writer.add_scalar(
             "Train/lr", float(optimizer.param_groups[0]["lr"]), epoch_i * num_training_examples + batch_idx
         )
+
+        if 0 < opt.max_train_steps <= batch_idx + 1:
+            break
 
     # Write epoch-level logs to file
     to_write = opt.train_log_txt_formatter.format(
@@ -116,31 +153,41 @@ def train(model, criterion, optimizer, lr_scheduler, train_dataset, val_dataset,
     opt.train_log_txt_formatter = "{time_str} [Epoch] {epoch:03d} [Loss] {loss_str}\n"
     opt.eval_log_txt_formatter = "{time_str} [Epoch] {epoch:03d} [Loss] {loss_str} [Metrics] {eval_metrics_str}\n"
 
+    data_generator = make_data_generator(opt.seed)
+    resume_rng_state = getattr(opt, "_resume_rng_state", None)
+    if resume_rng_state:
+        restore_rng_state(resume_rng_state, data_generator=data_generator)
     train_loader = DataLoader(
         train_dataset,
         collate_fn=start_end_collate,
         batch_size=opt.bsz,
         num_workers=opt.num_workers,
         shuffle=True,
-        pin_memory=opt.pin_memory
+        pin_memory=opt.pin_memory,
+        drop_last=opt.drop_last,
+        generator=data_generator,
+        worker_init_fn=seed_worker,
     )
 
-    prev_best_score = 0.0
-    es_cnt = 0  # early stop counter
+    resume_training_state = getattr(opt, "_resume_training_state", None) or {}
+    prev_best_score = float(resume_training_state.get("prev_best_score", 0.0))
+    es_cnt = int(resume_training_state.get("es_cnt", 0))
     if opt.start_epoch is None:
         start_epoch = -1 if opt.eval_untrained else 0
     else:
         start_epoch = opt.start_epoch
+    iteration = max(start_epoch, 0) * len(train_loader)
     save_submission_filename = "latest_{}_{}_preds.jsonl".format(
         opt.dset_name, opt.eval_split_name
     )
 
     for epoch_i in trange(start_epoch, opt.n_epoch, desc="Epoch"):
+        train_dataset.set_epoch(epoch_i)
         if epoch_i > -1:
             losses, iteration = train_epoch(
                 model, criterion, train_loader, optimizer, opt, epoch_i, tb_writer
             )
-            lr_scheduler.step(losses)
+            lr_scheduler.step()
         eval_epoch_interval = opt.eval_epoch
 
         if opt.eval_path is not None and (epoch_i + 1) % eval_epoch_interval == 0:
@@ -213,6 +260,14 @@ def train(model, criterion, optimizer, lr_scheduler, train_dataset, val_dataset,
                     "lr_scheduler": lr_scheduler.state_dict(),
                     "epoch": epoch_i,
                     "opt": opt,
+                    "checkpoint_boundary": "epoch",
+                    "reproducibility_state": capture_rng_state(
+                        data_generator, dataset_epoch=epoch_i, global_step=iteration
+                    ),
+                    "training_state": {
+                        "prev_best_score": prev_best_score,
+                        "es_cnt": es_cnt,
+                    },
                 }
                 torch.save(checkpoint, opt.ckpt_filepath.replace(".ckpt", "_best.ckpt"))
 
@@ -239,6 +294,14 @@ def train(model, criterion, optimizer, lr_scheduler, train_dataset, val_dataset,
             "lr_scheduler": lr_scheduler.state_dict(),
             "epoch": epoch_i,
             "opt": opt,
+            "checkpoint_boundary": "epoch",
+            "reproducibility_state": capture_rng_state(
+                data_generator, dataset_epoch=epoch_i, global_step=iteration
+            ),
+            "training_state": {
+                "prev_best_score": prev_best_score,
+                "es_cnt": es_cnt,
+            },
         }
         torch.save(checkpoint, opt.ckpt_filepath.replace(".ckpt", "_latest.ckpt"))
 
@@ -403,6 +466,12 @@ def start_training():
         dset_domain=opt.dset_domain,
         mr_only=opt.mr_only,
         keep_empty_gt=bool(getattr(opt, "use_exist_head", False)),
+        strict_data_contract=getattr(opt, "strict_data_contract", False),
+        require_text_mask=getattr(opt, "require_text_mask", False),
+        text_store_length=getattr(opt, "text_store_length", 77),
+        legacy_text_mask=getattr(opt, "legacy_text_mask", False),
+        legacy_gt_sampling=getattr(opt, "legacy_gt_sampling", False),
+        seed=opt.seed,
     )
     dataset_config["data_path"] = opt.train_path
     train_dataset = StartEndDataset(**dataset_config)
@@ -419,6 +488,21 @@ def start_training():
         eval_dataset = None
 
     model, criterion, optimizer, lr_scheduler = setup_model(opt)
+
+    if getattr(opt, "enable_aec", False):
+        from collections import Counter
+        from models.flash_vtg_gmr.event_cardinality import compute_effective_number_weights
+        counts = Counter()
+        for item in train_dataset.data:
+            rel_wins = item.get("relevant_windows", [])
+            if rel_wins is None:
+                rel_wins = []
+            counts[min(len(rel_wins), 4)] += 1
+        
+        weights = compute_effective_number_weights(counts)
+        logger.info(f"AEC Class weights: {weights.tolist()}")
+        if hasattr(model, "aec") and model.aec is not None:
+            model.aec.register_buffer("class_weights", weights.to(opt.device))
     logger.info(f"Model {model}")
     params = []
     logger.info("Learnable Parameters:")
@@ -452,11 +536,7 @@ def start_training():
 if __name__ == "__main__":
     opt = BaseOptions().parse()
     set_seed(opt.seed)
-    if opt.debug:  # keep the model run deterministically
-        # 'cudnn.benchmark = True' enabled auto finding the best algorithm for a specific input/net config.
-        # Enable this only when input size is fixed.
-        cudnn.benchmark = False
-        cudnn.deterministic = True
+    configure_runtime(repro_check=bool(opt.repro_check or opt.debug))
 
     opt.cfg = nncore.Config.from_file(opt.config)
 
@@ -470,7 +550,7 @@ if __name__ == "__main__":
 
     best_ckpt_path, eval_split_name, eval_path, debug, opt = start_training()
 
-    if not debug:
+    if not debug and eval_path is not None:
         input_args = [
             opt.config,
             "--resume",

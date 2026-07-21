@@ -363,13 +363,17 @@ def compute_effective_number_weights(
     for c in range(num_classes):
         n_c = class_counts.get(c, 0)
         if n_c == 0:
-            w = w_max
+            w = 0.0
         else:
             eff = (1 - beta_factor ** n_c) / (1 - beta_factor)
             w = 1.0 / eff
         weights.append(w)
 
     weights = torch.tensor(weights, dtype=torch.float32)
+    non_zero = weights > 0
+    if non_zero.any():
+        weights = weights / weights[non_zero].mean()
+    weights[~non_zero] = w_max
     weights = weights.clamp(w_min, w_max)
     return weights
 

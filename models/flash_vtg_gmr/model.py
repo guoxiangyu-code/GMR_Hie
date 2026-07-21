@@ -141,6 +141,22 @@ class FlashVTG(nn.Module):
                 nn.Linear(hidden_dim, 1),
             )
 
+        if getattr(args, "enable_adapter", False):
+            from models.flash_vtg_gmr.event_adapter import ProposalToEventAdapter
+            self.event_adapter = ProposalToEventAdapter(
+                feat_dim=hidden_dim,
+                num_modes=10,
+                variant=getattr(args, "adapter_variant", "P0"),
+            )
+        if getattr(args, "enable_aec", False):
+            from models.flash_vtg_gmr.event_cardinality import AdaptiveEventCardinality
+            self.aec = AdaptiveEventCardinality(
+                text_dim=getattr(args, "t_feat_dim", 512),
+                event_dim=hidden_dim,
+                variant=getattr(args, "aec_variant", "C1"),
+                seed=getattr(args, "seed", 2024),
+            )
+
 
     def forward(self, src_txt, src_txt_mask, src_vid, src_vid_mask, vid, qid, targets=None):
         if vid is not None:
@@ -200,7 +216,7 @@ class FlashVTG(nn.Module):
         video_emb = video_emb.permute(1, 0, 2)  # (L, batch_size, d) -> (batch_size, L, d)
         video_msk = (~video_msk).int()
         pymid, pymid_msk = self.pyramid(
-            video_emb, video_msk, return_mask=self.training == True
+            video_emb, video_msk, return_mask=(self.training == True or getattr(self.args, "enable_adapter", False) or getattr(self.args, "enable_aec", False))
         )
         point = self.generator(pymid)
 
@@ -229,6 +245,105 @@ class FlashVTG(nn.Module):
             output["t2vattnvalues"] = (attn_weights[:,:,self.args.num_dummies:] * (src_txt_mask.unsqueeze(1).repeat(1, video_length, 1))).sum(2)
             output["t2vattnvalues"] = torch.clamp(output["t2vattnvalues"], 0, 1)
             output["video_msk"] = video_msk
+
+            # Candidate extraction (Part 2 §4)
+            if getattr(self.args, "enable_adapter", False) or getattr(self.args, "enable_aec", False):
+                B = video_emb.shape[0]
+                K = 50
+                # Decode spans normalized [0, 1]
+                pts_center = point[:, 0].unsqueeze(0)  # (1, total_points)
+                pts_stride = point[:, 3].unsqueeze(0)  # (1, total_points)
+                start_sec = (pts_center - out_coord[:, :, 0] * pts_stride) * self.args.clip_length
+                end_sec = (pts_center + out_coord[:, :, 1] * pts_stride) * self.args.clip_length
+                spans_sec = torch.stack([start_sec, end_sec], dim=-1)  # (B, total_points, 2)
+                dur_sec = video_msk.sum(dim=1, keepdim=True) * self.args.clip_length  # (B, 1)
+                dur_sec = dur_sec.clamp(min=1e-6)
+                spans_norm = spans_sec / dur_sec.unsqueeze(-1)  # (B, total_points, 2)
+                spans_norm = spans_norm.clamp(0.0, 1.0)
+
+                # Find top-K based on out_class
+                scores = out_class.squeeze(-1)  # (B, total_points)
+                # Sort indices
+                _, topk_idx = scores.sort(dim=1, descending=True)
+                candidate_topk_idx = topk_idx[:, :K]  # (B, K)
+
+                # Gather features, mask, span, logit, point, scale
+                pymid_cat = torch.cat(pymid, dim=1)  # (B, total_points, 256)
+                candidate_feat = torch.gather(pymid_cat, 1, candidate_topk_idx.unsqueeze(-1).expand(-1, -1, 256))
+
+                if pymid_msk:
+                    pymid_msk_cat = torch.cat(pymid_msk, dim=1).bool()  # (B, total_points)
+                    candidate_mask = torch.gather(pymid_msk_cat, 1, candidate_topk_idx)
+                else:
+                    candidate_mask = torch.ones((B, K), dtype=torch.bool, device=video_emb.device)
+
+                candidate_span = torch.gather(spans_norm, 1, candidate_topk_idx.unsqueeze(-1).expand(-1, -1, 2))
+                candidate_logit = torch.gather(scores, 1, candidate_topk_idx)  # (B, K)
+
+                point_expanded = point.unsqueeze(0).expand(B, -1, -1)  # (B, total_points, 4)
+                candidate_point = torch.gather(point_expanded, 1, candidate_topk_idx.unsqueeze(-1).expand(-1, -1, 4))
+
+                scale_expanded = point[:, 3].unsqueeze(0).expand(B, -1)  # (B, total_points)
+                candidate_scale = torch.gather(scale_expanded, 1, candidate_topk_idx)  # (B, K)
+
+                query_global = query_emb.squeeze(1)  # (B, 256)
+
+                output["candidate_feat"] = candidate_feat
+                output["candidate_mask"] = candidate_mask
+                output["candidate_span"] = candidate_span
+                output["candidate_logit"] = candidate_logit
+                output["candidate_topk_idx"] = candidate_topk_idx
+                output["candidate_point"] = candidate_point
+                output["candidate_scale"] = candidate_scale
+                output["query_global"] = query_global
+
+                if getattr(self.args, "enable_adapter", False):
+                    # Run P0 adapter
+                    adapter_out = self.event_adapter(
+                        candidate_feat,
+                        candidate_mask,
+                        candidate_span,
+                        candidate_logit,
+                        candidate_scale,
+                        query_global,
+                    )
+                    output.update(adapter_out)
+
+                    # Build EventInterfaceV1 and expose it
+                    from models.flash_vtg_gmr.event_adapter import p0_inference
+                    iface = p0_inference(adapter_out, query_global)
+                    output["event_interface"] = iface
+
+                if getattr(self.args, "enable_aec", False):
+                    aec_variant = getattr(self.args, "aec_variant", "C1")
+                    if aec_variant in ("G0", "G0-Con"):
+                        # AEC runs on raw candidates
+                        aec_out = self.aec(
+                            text_feat=src_txt,
+                            text_mask=src_txt_mask,
+                            set_feat=candidate_feat,
+                            set_mask=candidate_mask,
+                            count_class=targets.get("count_class") if targets is not None else None,
+                        )
+                    else:
+                        # AEC runs on event modes from adapter
+                        event_feat = adapter_out["event_feat"]
+                        event_mask = adapter_out["event_mask"]
+                        aec_out = self.aec(
+                            text_feat=src_txt,
+                            text_mask=src_txt_mask,
+                            set_feat=event_feat,
+                            set_mask=event_mask,
+                            count_class=targets.get("count_class") if targets is not None else None,
+                        )
+                    output["pred_count_logits"] = aec_out["count_logits"]
+                    output["pred_count_probs"] = aec_out["count_probs"]
+                    if "loss_count" in aec_out:
+                        output["loss_count"] = aec_out["loss_count"]
+                    if "loss_count_con" in aec_out:
+                        output["loss_count_con"] = aec_out["loss_count_con"]
+                    if "loss_count_total" in aec_out:
+                        output["loss_count_total"] = aec_out["loss_count_total"]
 
             if self.use_exist_head:
                 vmask = video_msk.float()  # (bsz, L_vid), 1=valid
@@ -721,6 +836,45 @@ class SetCriterion(nn.Module):
         if exist_labels is not None:
             pos_mask = (exist_labels > 0.5)
 
+        part2_losses = {}
+        # 1. P0 Adapter losses: L_event, L_quality, L_span (if P0-R)
+        if getattr(self.args, "enable_adapter", False):
+            from models.flash_vtg_gmr.event_adapter import compute_adapter_losses
+            adapter_targets = []
+            for meta in targets["label"]:
+                duration = float(meta["duration"])
+                rel_wins = meta.get("relevant_windows", [])
+                if rel_wins is None:
+                    rel_wins = []
+                is_null = len(rel_wins) == 0
+                norm_wins = [[w[0] / duration, w[1] / duration] for w in rel_wins]
+                adapter_targets.append({
+                    "is_null": is_null,
+                    "relevant_windows_norm": norm_wins
+                })
+            
+            adapter_losses = compute_adapter_losses(
+                event_logit=outputs["event_logit"],
+                quality_logit=outputs["quality_logit"],
+                event_span=outputs["event_span"],
+                event_mask=outputs["event_mask"],
+                targets=adapter_targets,
+                variant=getattr(self.args, "adapter_variant", "P0"),
+            )
+            if "loss_event" in adapter_losses:
+                part2_losses["loss_event"] = adapter_losses["loss_event"]
+            if "loss_quality" in adapter_losses:
+                part2_losses["loss_quality"] = adapter_losses["loss_quality"]
+            if "loss_span" in adapter_losses:
+                part2_losses["loss_span"] = adapter_losses["loss_span"]
+
+        # 2. AEC losses: L_count, L_count_con
+        if getattr(self.args, "enable_aec", False):
+            if "loss_count" in outputs:
+                part2_losses["loss_count"] = outputs["loss_count"]
+            if "loss_count_con" in outputs:
+                part2_losses["loss_count_con"] = outputs["loss_count_con"]
+
         def _filter_dict_by_mask(d, m):
             def _filter_value_by_mask(v):
                 if torch.is_tensor(v):
@@ -735,7 +889,14 @@ class SetCriterion(nn.Module):
                     return {kk: _filter_value_by_mask(vv) for kk, vv in v.items()}
                 return v
 
-            return {k: _filter_value_by_mask(v) for k, v in d.items()}
+            filtered = {}
+            keep = torch.where(m)[0].tolist()
+            for k, v in d.items():
+                if k == "span_labels" and isinstance(v, list) and len(v) == m.shape[0]:
+                    filtered[k] = [v[index] for index in keep]
+                else:
+                    filtered[k] = _filter_value_by_mask(v)
+            return filtered
 
         # build nncore-loss inputs
         if pos_mask is None or bool(pos_mask.all()):
@@ -771,6 +932,7 @@ class SetCriterion(nn.Module):
         for loss in self.losses:
             losses.update(self.get_loss(loss, outputs, targets))
 
+        losses.update(part2_losses)
         return losses
 
 class Parameter(nn.Parameter):
@@ -907,6 +1069,17 @@ def build_model1(args):
         "loss_cls": args.lw_cls,
         "loss_sal": args.lw_sal,
     }
+
+    if getattr(args, "enable_adapter", False):
+        weight_dict["loss_event"] = 1.0
+        weight_dict["loss_quality"] = 1.0
+        if getattr(args, "adapter_variant", "P0") == "P0-R":
+            weight_dict["loss_span"] = 1.0
+
+    if getattr(args, "enable_aec", False):
+        weight_dict["loss_count"] = 1.0
+        if getattr(args, "aec_variant", "C1") in ("C2", "G0-Con"):
+            weight_dict["loss_count_con"] = 0.1
 
     # Retain only localization losses in MR-only mode.
     if getattr(args, "mr_only", False):
